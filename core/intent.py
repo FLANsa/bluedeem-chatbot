@@ -141,6 +141,12 @@ next_action:
 - "مين اطباء الاطفال" → doctor + use_llm
 - "مين اطباء الجلدية" → doctor + use_llm
 - "قائمة الأطباء" → doctor + use_llm
+- "ابي طبيب عظام" → doctor + use_llm
+- "ابي عظام" → doctor + use_llm
+- "ابي اسماء الاطباء" → doctor + use_llm
+- "ابي الاطباء" → doctor + use_llm
+- "اريد طبيب اسنان" → doctor + use_llm
+- "عندي طبيب جلدية" → doctor + use_llm
 - "حجز" → booking + ask_clarification
 - "ابي احجز" → booking + ask_clarification
 - "ابي احجز عند د. محمد" → booking + start_booking + doctor_name="د. محمد"
@@ -205,6 +211,26 @@ next_action:
                 confidence=0.95,
                 next_action="use_llm"
             )
+        
+        # Doctor queries with "ابي طبيب" or "ابي [specialty]" - check early
+        if ('ابي' in message_lower or 'عندي' in message_lower or 'اريد' in message_lower):
+            # Check for specialty keywords
+            specialty_keywords = ['عظام', 'اسنان', 'أسنان', 'جلدية', 'أطفال', 'اطفال', 'نساء', 'ولادة', 'باطنية']
+            if any(keyword in message_lower for keyword in specialty_keywords):
+                return IntentSchema(
+                    intent="doctor",
+                    entities=[Entity(**e) for e in extracted_entities] if extracted_entities else [],
+                    confidence=0.92,
+                    next_action="use_llm"
+                )
+            # Check for "طبيب" or "دكتور" or "اسماء الاطباء"
+            if ('طبيب' in message_lower or 'دكتور' in message_lower or 'اسماء' in message_lower and 'اطباء' in message_lower):
+                return IntentSchema(
+                    intent="doctor",
+                    entities=[Entity(**e) for e in extracted_entities] if extracted_entities else [],
+                    confidence=0.92,
+                    next_action="use_llm"
+                )
         
         # Greetings - extended check for longer greetings
         greeting_keywords = ['مرحبا', 'اهلا', 'السلام', 'هاي', 'هلا', 'كيف حالك', 'كيفك', 'السلام عليكم', 'وعليكم السلام']

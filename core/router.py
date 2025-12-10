@@ -341,33 +341,33 @@ class Router:
         message: str = ""
     ) -> str:
         """Generate direct response without LLM for simple queries."""
-        message_lower = message.lower() if message else ""
+        from utils.arabic_normalizer import normalize_ar
+        
+        message_normalized = normalize_ar(message) if message else ""
+        message_lower = message_normalized.lower() if message_normalized else ""
         
         if intent == "doctor":
             doctors = data_handler.get_doctors()
             if not doctors:
                 return "⚠️ ما لقيت أطباء متاحين حالياً."
             
+            # Specialty mapping (normalized)
             specialty_keywords = {
-                'أسنان': 'أسنان',
                 'اسنان': 'أسنان',
-                'الأسنان': 'أسنان',
-                'الاسنان': 'أسنان',
                 'جلدية': 'جلدية',
-                'الجلدية': 'جلدية',
                 'نساء': 'نساء وولادة',
                 'ولادة': 'نساء وولادة',
-                'أطفال': 'أطفال',
                 'اطفال': 'أطفال',
-                'العظام': 'عظام',
-                'عظام': 'عظام'
+                'عظام': 'عظام',
+                'باطنية': 'باطنية'
             }
             
             filtered_doctors = doctors
             specialty_found = None
+            # Check normalized message for specialty keywords
             for keyword, specialty in specialty_keywords.items():
                 if keyword in message_lower:
-                    filtered_doctors = [d for d in doctors if d.get('specialty', '') == specialty]
+                    filtered_doctors = [d for d in doctors if normalize_ar(d.get('specialty', '')) == keyword]
                     specialty_found = specialty
                     if filtered_doctors:
                         break
