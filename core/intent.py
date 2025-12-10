@@ -118,6 +118,7 @@ next_action:
 - إذا "وين" أو "الموقع" أو "موقع" أو "عطني الموقع" → intent=branch + use_llm
 - إذا "مين" مع "اطباء" أو "دكاتره" أو "دكاترة" → intent=doctor + use_llm (مهم جداً!)
 - إذا "مين اطباء" مع تخصص (أسنان/جلدية/أطفال/عظام/نساء) → intent=doctor + use_llm
+- إذا "مين احسن" أو "مين افضل" مع "طبيب" أو "دكتور" أو تخصص → intent=doctor + use_llm (مهم جداً!)
 - إذا "متى" مع "تفتح" أو "دوام" → intent=hours
 - إذا "شكر" أو "تمام" → intent=thanks
 
@@ -140,6 +141,9 @@ next_action:
 - "مين اطباء الاسنان الموجودين؟" → doctor + use_llm
 - "مين اطباء الاطفال" → doctor + use_llm
 - "مين اطباء الجلدية" → doctor + use_llm
+- "مين احسن طبيب عظام" → doctor + use_llm
+- "مين افضل دكتور اسنان" → doctor + use_llm
+- "مين احسن طبيب عندكم" → doctor + use_llm
 - "قائمة الأطباء" → doctor + use_llm
 - "ابي طبيب عظام" → doctor + use_llm
 - "ابي عظام" → doctor + use_llm
@@ -203,7 +207,7 @@ next_action:
                 next_action="use_llm"
             )
         
-        # Doctor queries with "مين اطباء" - check early (but after greetings)
+        # Doctor queries with "مين اطباء" or "مين احسن" or "مين افضل" - check early (but after greetings)
         if ('مين' in message_lower and ('اطباء' in message_lower or 'دكاتره' in message_lower or 'دكاترة' in message_lower)):
             return IntentSchema(
                 intent="doctor",
@@ -211,6 +215,25 @@ next_action:
                 confidence=0.95,
                 next_action="use_llm"
             )
+        
+        # Doctor queries with "مين احسن" or "مين افضل" with doctor/specialty
+        if ('مين' in message_lower and ('احسن' in message_lower or 'افضل' in message_lower or 'أفضل' in message_lower or 'أحسن' in message_lower)):
+            if ('طبيب' in message_lower or 'دكتور' in message_lower or 'دكاتره' in message_lower or 'دكاترة' in message_lower):
+                return IntentSchema(
+                    intent="doctor",
+                    entities=[Entity(**e) for e in extracted_entities] if extracted_entities else [],
+                    confidence=0.95,
+                    next_action="use_llm"
+                )
+            # Check for specialty keywords even without "طبيب" explicitly
+            specialty_keywords = ['عظام', 'اسنان', 'أسنان', 'جلدية', 'أطفال', 'اطفال', 'نساء', 'ولادة', 'باطنية']
+            if any(keyword in message_lower for keyword in specialty_keywords):
+                return IntentSchema(
+                    intent="doctor",
+                    entities=[Entity(**e) for e in extracted_entities] if extracted_entities else [],
+                    confidence=0.93,
+                    next_action="use_llm"
+                )
         
         # Doctor queries with "ابي طبيب" or "ابي [specialty]" - check early
         if ('ابي' in message_lower or 'عندي' in message_lower or 'اريد' in message_lower):

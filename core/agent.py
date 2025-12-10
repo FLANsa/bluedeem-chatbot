@@ -110,7 +110,7 @@ class ChatAgent:
 
 شكل الرد حسب intent:
 - greeting: رحّب بسرعة ودافئ + خيارات (أطباء/خدمات/فروع/دوام/حجز)
-- doctor: لو doctor_name اعرض التخصص + الفرع + أوقات مختصرة + معلومات إضافية مفيدة. لو قائمة/تخصص اعرض 3–6 أسماء ثم اسأل عن التخصص
+- doctor: لو doctor_name اعرض التخصص + الفرع + أوقات مختصرة + معلومات إضافية مفيدة. لو قائمة/تخصص اعرض 3–6 أسماء ثم اسأل عن التخصص. **مهم جداً:** إذا كان السؤال عن "مين احسن" أو "مين افضل" طبيب، اعرض الأطباء المتاحين في التخصص مع معلومات مفيدة (مثل الخبرة، المؤهلات، التقييمات إن وجدت) واشرح أن كل الأطباء ممتازين، أو إذا كانت هناك معلومات محددة عن الأفضل (مثل سنوات الخبرة)، استخدمها
 - service: لو service_name اعرض وصف مفيد + السعر/المدة إن وجدت. لو قائمة اعرض 3–6 خدمات مع السعر إن وجد
 - branch: اعرض 2–4 فروع مع المدينة/عنوان مختصر + رقم/رابط إن وجد
 - hours: اعرض ساعات الدوام لكل فرع بشكل واضح ومفيد
@@ -163,6 +163,7 @@ class ChatAgent:
         user_prompt_parts.append("6. إذا كان المستخدم يسأل عن شيء تم ذكره في المحادثة السابقة (مثل: 'هل بس هذولا؟' أو 'غيرهم؟' أو 'كم عددهم؟')، استخدم المحادثة السابقة لفهم ما يقصده ورد عليه بناءً على البيانات المتوفرة")
         user_prompt_parts.append("7. **لا تقل 'ما قدرت أفهم' أبداً** - حاول تفهم من السياق والبيانات ورد بشكل مفيد. إذا كان السؤال غير واضح، اسأل سؤال توضيحي واحد فقط")
         user_prompt_parts.append("8. **كن متسقاً**: نفس نوع السؤال يجب أن يحصل على نفس مستوى الذكاء والتفصيل في الرد")
+        user_prompt_parts.append("9. **أسئلة 'مين احسن' أو 'مين افضل' (مهم جداً)**: إذا كان السؤال عن 'مين احسن طبيب' أو 'مين افضل دكتور'، اعرض الأطباء المتاحين في التخصص المذكور (أو من السياق) مع معلومات مفيدة (الخبرة، المؤهلات إن وجدت). اشرح أن كل الأطباء ممتازين، أو إذا كانت هناك معلومات محددة عن الأفضل (مثل سنوات الخبرة)، استخدمها. **لا ترد برد عام - اعرض الأطباء فعلياً!**")
         
         user_prompt = "\n".join(user_prompt_parts)
         
@@ -374,6 +375,9 @@ class ChatAgent:
         message_lower = normalize_ar(message) if message else ""
         MAX_ITEMS = 12
         
+        # Check for "احسن" or "افضل" questions - need detailed info
+        is_comparison_question = any(keyword in message_lower for keyword in ['احسن', 'افضل', 'أفضل', 'أحسن', 'مين احسن', 'مين افضل'])
+        
         # Check for follow-up questions (like "هل بس هذولا؟" or "غيرهم؟" or "كم عددهم؟")
         # If detected, send full data instead of limited
         follow_up_keywords = ['بس', 'غيرهم', 'غيرها', 'غير', 'عددهم', 'عددها', 'كم', 'كلهم', 'كلها', 'كل', 'هذولا', 'هذولا', 'هذي', 'هذا']
@@ -453,35 +457,51 @@ class ChatAgent:
                 # Filtered by specialty - show filtered doctors in compact format
                 doctors_list = []
                 for doc in filtered_doctors:
-                    doctors_list.append({
+                    doctor_info = {
                         "doctor_name": doc.get('doctor_name', ''),
                         "specialty": doc.get('specialty', ''),
                         "branch_id": doc.get('branch_id', ''),
                         "days": doc.get('days', ''),
                         "time_from": doc.get('time_from', ''),
                         "time_to": doc.get('time_to', '')
-                    })
+                    }
+                    # If comparison question, include experience and qualifications
+                    if is_comparison_question:
+                        doctor_info["experience_years"] = doc.get('experience_years', '')
+                        doctor_info["qualifications"] = doc.get('qualifications', '')
+                        doctor_info["notes"] = doc.get('notes', '')
+                    doctors_list.append(doctor_info)
                 total = len(filtered_doctors)
-                # If follow-up question, send all data; otherwise limit
-                if is_follow_up:
-                    context_parts.append(f"أطباء {specialty_found} (العدد الكامل: {total}):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
+                # If follow-up question or comparison question, send all data; otherwise limit
+                if is_follow_up or is_comparison_question:
+                    context_parts.append(f"أطباء {specialty_found} (العدد الكامل: {total}) - **مهم:** إذا كان السؤال عن 'مين احسن' أو 'مين افضل'، استخدم معلومات الخبرة والمؤهلات المتوفرة:\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
                 else:
                     doctors_list = doctors_list[:MAX_ITEMS]
                     context_parts.append(f"أطباء {specialty_found} (عرض {len(doctors_list)} من أصل {total}):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
             elif doctors:
                 doctors_list = []
                 for doc in doctors:
-                    doctors_list.append({
+                    doctor_info = {
                         "doctor_name": doc.get('doctor_name', ''),
                         "specialty": doc.get('specialty', ''),
                         "branch_id": doc.get('branch_id', ''),
                         "days": doc.get('days', ''),
                         "time_from": doc.get('time_from', ''),
                         "time_to": doc.get('time_to', '')
-                    })
+                    }
+                    # If comparison question, include experience and qualifications
+                    if is_comparison_question:
+                        doctor_info["experience_years"] = doc.get('experience_years', '')
+                        doctor_info["qualifications"] = doc.get('qualifications', '')
+                        doctor_info["notes"] = doc.get('notes', '')
+                    doctors_list.append(doctor_info)
                 total = len(doctors_list)
-                doctors_list = doctors_list[:MAX_ITEMS]
-                context_parts.append(f"الأطباء (عرض {len(doctors_list)} من أصل {total}):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
+                # If comparison question, send all data; otherwise limit
+                if is_comparison_question:
+                    context_parts.append(f"الأطباء (العدد الكامل: {total}) - **مهم:** إذا كان السؤال عن 'مين احسن' أو 'مين افضل'، استخدم معلومات الخبرة والمؤهلات المتوفرة:\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
+                else:
+                    doctors_list = doctors_list[:MAX_ITEMS]
+                    context_parts.append(f"الأطباء (عرض {len(doctors_list)} من أصل {total}):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
         
         elif intent == "service":
             if 'services' in relevant_data:
