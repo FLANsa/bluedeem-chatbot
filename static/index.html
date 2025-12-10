@@ -425,8 +425,14 @@
             sendButton.innerHTML = '<div class="loading"></div>';
 
             try {
+                // Get base URL (works for both local and production)
+                const baseUrl = window.location.origin;
+                const apiUrl = `${baseUrl}/chat/api/chat`;
+                
+                console.log('Sending request to:', apiUrl);
+                
                 // Call backend API
-                const response = await fetch('/chat/api/chat', {
+                const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -438,7 +444,16 @@
                     })
                 });
 
+                console.log('Response status:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('API Error:', response.status, errorText);
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+
                 const data = await response.json();
+                console.log('Response data:', data);
                 
                 // Add bot response with slight delay for natural feel
                 setTimeout(() => {
@@ -454,7 +469,8 @@
             } catch (error) {
                 console.error('Error:', error);
                 setTimeout(() => {
-                    addMessage('⚠️ عذراً، حدث خطأ في الاتصال');
+                    const errorMessage = error.message || 'عذراً، حدث خطأ في الاتصال';
+                    addMessage(`⚠️ ${errorMessage}`);
                     sendButton.disabled = false;
                     sendButton.innerHTML = `
                         <svg viewBox="0 0 24 24" fill="white">

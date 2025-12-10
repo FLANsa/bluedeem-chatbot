@@ -66,3 +66,17 @@ async def chat_api(request: ChatRequest):
             detail=f"Error processing message: {str(e)}"
         )
 
+
+@router.options("/api/chat")
+async def chat_api_options():
+    """Handle CORS preflight requests."""
+    from fastapi import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
+    )
+
