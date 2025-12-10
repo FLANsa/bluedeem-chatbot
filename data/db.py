@@ -2,7 +2,7 @@
 from models.booking import init_db, SessionLocal, Base
 from models.conversation import ConversationHistory
 from models.user_preferences import UserPreferences
-import config
+import os
 
 
 def initialize_database():

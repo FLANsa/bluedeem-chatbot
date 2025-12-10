@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 import json
-import config
+import os
 
 Base = declarative_base()
 
@@ -62,8 +62,8 @@ class ProcessedMessage(Base):
 
 # Database setup
 engine = create_engine(
-    config.DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in config.DATABASE_URL else {}
+    os.getenv('DATABASE_URL', 'sqlite:///bluedeem.db'),
+    connect_args={"check_same_thread": False} if "sqlite" in os.getenv('DATABASE_URL', 'sqlite:///bluedeem.db') else {}
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
