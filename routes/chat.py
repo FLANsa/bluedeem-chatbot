@@ -1,4 +1,8 @@
 """Chat API route for web UI testing."""
+# Load environment variables FIRST
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel

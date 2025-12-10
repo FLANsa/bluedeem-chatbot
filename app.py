@@ -1,4 +1,8 @@
 """FastAPI application entry point."""
+# Load environment variables FIRST before importing anything else
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -6,11 +10,6 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import logging
 import os
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
-
 from routes import webhook, health, chat
 from data.db import initialize_database
 
