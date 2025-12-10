@@ -73,6 +73,34 @@ class Router:
         entities = [e.dict() for e in intent_result.entities]
         next_action = intent_result.next_action
         
+        # Handle unclear intent - add smart fallback for simple greetings
+        if intent == "unclear":
+            # Check if it's a simple greeting that was misclassified
+            from utils.arabic_normalizer import normalize_ar
+            message_normalized = normalize_ar(message)
+            message_lower = message_normalized.lower().strip()
+            message_clean = message_lower.replace(' ', '').replace('،', '').replace(',', '')
+            message_original_lower = message.strip().lower()
+            
+            simple_greetings = ['هلا', 'اهلا', 'مرحبا', 'هاي', 'أهلا', 'أهلاً', 'هلاً']
+            if (message_clean in simple_greetings or 
+                message_original_lower in simple_greetings or
+                message_clean.startswith('هلا') or 
+                message_clean.startswith('اهلا') or
+                message_original_lower.startswith('هلا') or
+                message_original_lower.startswith('اهلا')):
+                # Reclassify as greeting
+                intent = "greeting"
+                next_action = "use_llm"
+            else:
+                # For other unclear messages, use LLM to handle
+                response = self._use_llm(
+                    message, intent, entities, context,
+                    user_id, platform, conversation_history
+                )
+                context_manager.add_to_context(user_id, platform, message, response)
+                return response
+        
         # Handle general questions first - direct to LLM
         if intent == "general":
             response = self._use_llm(

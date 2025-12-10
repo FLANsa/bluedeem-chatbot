@@ -109,9 +109,11 @@ next_action:
 - start_booking: ابدأ عملية الحجز (فقط عند طلب صريح للحجز)
 
 قواعد مهمة:
+- **مهم جداً:** "اهلا" أو "هلا" أو "مرحبا" أو "هاي" → intent=greeting + use_llm (دائماً!)
 - إذا كانت الرسالة فيها "حجز" بدون (فرع/طبيب/خدمة/وقت واضح) → intent=booking و next_action=ask_clarification
 - إذا "وين" أو "الموقع" أو "موقع" أو "عطني الموقع" → intent=branch + use_llm
-- إذا "مين" مع "اطباء" أو "دكاتره" → intent=doctor
+- إذا "مين" مع "اطباء" أو "دكاتره" أو "دكاترة" → intent=doctor + use_llm (مهم جداً!)
+- إذا "مين اطباء" مع تخصص (أسنان/جلدية/أطفال/عظام/نساء) → intent=doctor + use_llm
 - إذا "متى" مع "تفتح" أو "دوام" → intent=hours
 - إذا "شكر" أو "تمام" → intent=thanks
 
@@ -131,6 +133,9 @@ next_action:
 - "متى تفتح الفروع؟" → hours + use_llm
 - "مين الاطباء الي عندكم؟" → doctor + use_llm
 - "مين الدكاتره الي عندكم" → doctor + use_llm
+- "مين اطباء الاسنان الموجودين؟" → doctor + use_llm
+- "مين اطباء الاطفال" → doctor + use_llm
+- "مين اطباء الجلدية" → doctor + use_llm
 - "قائمة الأطباء" → doctor + use_llm
 - "حجز" → booking + ask_clarification
 - "ابي احجز" → booking + ask_clarification
@@ -159,18 +164,40 @@ next_action:
         # 1) Quick entity extraction before LLM
         extracted_entities = quick_extract_entities(message)
         
-        # 2) Quick check for common intents (greeting/thanks/goodbye) before LLM
+        # 2) Quick check for common intents (greeting/thanks/goodbye/doctor) before LLM
         message_normalized = normalize_ar(message)
         message_lower = message_normalized.lower().strip()
         message_clean = message_lower.replace(' ', '').replace('،', '').replace(',', '')
+        message_original_lower = message.strip().lower()
         
-        # Greetings - check first for speed (check both normalized and clean versions)
+        # Greetings - check FIRST (before anything else) for simple greetings
+        # This is critical for first messages like "اهلا" or "هلا"
+        simple_greetings = ['هلا', 'اهلا', 'مرحبا', 'هاي', 'أهلا', 'أهلاً', 'هلاً']
+        if (message_clean in simple_greetings or 
+            message_original_lower in simple_greetings or
+            message_clean.startswith('هلا') or 
+            message_clean.startswith('اهلا') or
+            message_original_lower.startswith('هلا') or
+            message_original_lower.startswith('اهلا')):
+            return IntentSchema(
+                intent="greeting",
+                entities=[Entity(**e) for e in extracted_entities] if extracted_entities else [],
+                confidence=0.98,
+                next_action="use_llm"
+            )
+        
+        # Doctor queries with "مين اطباء" - check early (but after greetings)
+        if ('مين' in message_lower and ('اطباء' in message_lower or 'دكاتره' in message_lower or 'دكاترة' in message_lower)):
+            return IntentSchema(
+                intent="doctor",
+                entities=[Entity(**e) for e in extracted_entities] if extracted_entities else [],
+                confidence=0.95,
+                next_action="use_llm"
+            )
+        
+        # Greetings - extended check for longer greetings
         greeting_keywords = ['مرحبا', 'اهلا', 'السلام', 'هاي', 'هلا', 'كيف حالك', 'كيفك', 'السلام عليكم', 'وعليكم السلام']
-        # Also check exact matches for common greetings (both with and without normalization)
-        if (message_clean in ['هلا', 'اهلا', 'مرحبا', 'هاي'] or 
-            message.strip().lower() in ['هلا', 'اهلا', 'مرحبا', 'هاي', 'أهلا', 'أهلاً'] or
-            any(keyword in message_lower for keyword in greeting_keywords) or
-            any(keyword in message.strip().lower() for keyword in ['هلا', 'اهلا', 'مرحبا', 'هاي', 'أهلا', 'أهلاً'])):
+        if any(keyword in message_lower for keyword in greeting_keywords):
             return IntentSchema(
                 intent="greeting",
                 entities=[Entity(**e) for e in extracted_entities] if extracted_entities else [],
@@ -331,6 +358,15 @@ next_action:
                 entities=[Entity(**e) for e in entities] if entities else [],
                 confidence=0.9,
                 next_action="start_booking"
+            )
+        
+        # Check for "مين اطباء" patterns - very common doctor queries
+        if ('مين' in message_lower and ('اطباء' in message_lower or 'دكاتره' in message_lower or 'دكاترة' in message_lower)):
+            return IntentSchema(
+                intent="doctor",
+                entities=[Entity(**e) for e in entities] if entities else [],
+                confidence=0.95,
+                next_action="use_llm"
             )
         
         # Check for simple keywords that should be handled
