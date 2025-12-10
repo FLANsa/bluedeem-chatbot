@@ -54,8 +54,27 @@ class GoogleSheetsSource(DataSource):
         }
         
         # Authenticate
+        import os
+        import json
         from pathlib import Path
-        if credentials_path and Path(credentials_path).exists():
+        
+        # First, try to get credentials from environment variable (for Render)
+        credentials_json = os.getenv('GOOGLE_SHEETS_CREDENTIALS_JSON')
+        if credentials_json:
+            try:
+                # Parse JSON string from environment variable
+                if isinstance(credentials_json, str):
+                    creds_dict = json.loads(credentials_json)
+                else:
+                    creds_dict = credentials_json
+                
+                scope = ['https://spreadsheets.google.com/feeds',
+                        'https://www.googleapis.com/auth/drive']
+                creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+                self.client = gspread.authorize(creds)
+            except Exception as e:
+                raise ValueError(f"Failed to authenticate with Google Sheets from JSON. Error: {e}")
+        elif credentials_path and Path(credentials_path).exists():
             # Use service account file
             scope = ['https://spreadsheets.google.com/feeds',
                     'https://www.googleapis.com/auth/drive']
