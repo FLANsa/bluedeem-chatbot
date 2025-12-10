@@ -1,15 +1,16 @@
 """Data handler for Google Sheets with validation, normalization, and caching."""
 import json
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from cachetools import TTLCache
-import config
 from utils.date_parser import get_today_riyadh
 from data.sources import GoogleSheetsSource
 
 
 # Cache with TTL
-cache = TTLCache(maxsize=100, ttl=config.CACHE_TTL)
+CACHE_TTL = int(os.getenv('CACHE_TTL', 3600))
+cache = TTLCache(maxsize=100, ttl=CACHE_TTL)
 
 
 # Expected CSV schemas
