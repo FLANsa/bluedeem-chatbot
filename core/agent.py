@@ -22,7 +22,8 @@ class ChatAgent:
         self.model = os.getenv('LLM_MODEL_AGENT', 'gpt-4o-mini')
         self._schema = make_schema_strict(AgentResponseSchema.model_json_schema())
         # Cache responses for short window to reduce cost on repeated asks
-        self._response_cache = TTLCache(maxsize=300, ttl=120)
+        # TTL قصير (60 ثانية) لضمان ردود حديثة ومتسقة
+        self._response_cache = TTLCache(maxsize=300, ttl=60)
     
     def generate_response(
         self,
@@ -47,14 +48,17 @@ class ChatAgent:
             AgentResponseSchema with response_text, needs_clarification, suggested_questions
         """
         # Quick cache for repeated messages (same intent + normalized message + entities)
+        # لا نستخدم cache للأسئلة المعقدة أو التي تحتاج سياق
         cache_key = None
         try:
-            norm_msg = normalize_ar(message) if message else ""
-            ent_key = tuple(sorted([f"{e.get('type','')}:{e.get('value','')}" for e in entities]))
-            cache_key = (intent, norm_msg, ent_key)
-            if cache_key in self._response_cache:
-                cached = self._response_cache[cache_key]
-                return AgentResponseSchema(**cached)
+            # لا نستخدم cache إذا كان هناك conversation_history (يحتاج سياق)
+            if not conversation_history or len(conversation_history) == 0:
+                norm_msg = normalize_ar(message) if message else ""
+                ent_key = tuple(sorted([f"{e.get('type','')}:{e.get('value','')}" for e in entities]))
+                cache_key = (intent, norm_msg, ent_key)
+                if cache_key in self._response_cache:
+                    cached = self._response_cache[cache_key]
+                    return AgentResponseSchema(**cached)
         except Exception:
             pass
 
@@ -88,13 +92,15 @@ class ChatAgent:
 - ذكي في استخدام السياق: تربط الأسئلة الحالية بالمحادثة السابقة
 - مرن في طول الرد: حسب نوع السؤال (بسيط = قصير، معقد = أطول)
 
-قواعد أساسية:
+قواعد أساسية (مهم جداً للاتساق):
 1) طول الرد مرن: 2-6 جمل حسب الحاجة (أسئلة بسيطة = 2-3 جمل، أسئلة معقدة = 4-6 جمل)
 2) لا تخترع أي معلومة؛ استخدم فقط البيانات المتوفرة في الرسالة
 3) إذا ما فيه بيانات كافية: اسأل سؤال توضيحي واحد + اقترح 2–4 خيارات
 4) لا تبدأ الحجز إلا بطلب صريح (\"ابي احجز\"/\"حجز\"/\"ابي موعد\")
 5) قوائم (أطباء/فروع/خدمات): اعرض 3–6 عناصر مختصرة مع أهم معلومة
 6) إيموجي قليلة: ✅ 📍 ⏰ 💰 (حد أقصى 2)
+7) **كن متسقاً**: نفس نوع السؤال = نفس نوع الرد (معلوماتية، ودودة، مفيدة)
+8) **استخدم البيانات دائماً**: إذا كانت البيانات متوفرة، استخدمها. لا تعتمد على التخمين
 
 استخدام السياق بذكاء:
 - اربط الأسئلة الحالية بالمحادثة السابقة
@@ -113,15 +119,24 @@ class ChatAgent:
 - **unclear/faq (مهم جداً):** إذا كانت النية unclear أو faq، استخدم البيانات المتوفرة (الأطباء/الخدمات/الفروع) لفهم ما يقصده المستخدم ورد عليه بناءً على البيانات. لا تقل "ما قدرت أفهم" - حاول تفهم من السياق والبيانات المتوفرة ورد بشكل مفيد. إذا كان السؤال عن شيء موجود في البيانات، اذكره مباشرة
 - **أسئلة متابعة (مهم جداً):** إذا كان المستخدم يسأل عن شيء تم ذكره في المحادثة السابقة (مثل: "هل بس هذولا؟" أو "غيرهم؟" أو "كم عددهم؟" أو "هل عندكم غيرهم؟")، استخدم المحادثة السابقة لفهم ما يقصده ورد عليه بناءً على البيانات المتوفرة. إذا كان السؤال عن "هل هناك المزيد؟" أو "غيرهم؟"، افحص البيانات وأخبره بالعدد الكامل أو إذا كان هناك المزيد
 
-مخرجاتك يجب أن تكون JSON يطابق schema (response_text, needs_clarification, suggested_questions). response_text لازم يكون عربي نجدي طبيعي وواضح."""
+مخرجاتك يجب أن تكون JSON يطابق schema (response_text, needs_clarification, suggested_questions). response_text لازم يكون عربي نجدي طبيعي وواضح.
+
+**مهم جداً للاتساق:**
+- نفس نوع السؤال = نفس مستوى الذكاء والتفصيل
+- استخدم البيانات المتوفرة دائماً - لا تتجاهلها
+- إذا كان هناك سياق، استخدمه بذكاء
+- كن متسقاً في الأسلوب واللهجة"""
         
-        # Get conversation history context
+        # Get conversation history context - دائماً حاول استخدام السياق حتى لو كان محدوداً
         conversation_context = ""
         if conversation_history:
             conversation_context = context_manager.build_context_string(
                 conversation_history,
                 max_length=1500
             )
+        # حتى لو ما فيه conversation_history، استخدم message نفسها كسياق
+        if not conversation_context and message:
+            conversation_context = f"الرسالة السابقة: {message}"
         
         # Prepare context with available data (use relevant_data from router if available)
         relevant_data = context.get('relevant_data', {}) if context else {}
@@ -139,14 +154,15 @@ class ChatAgent:
         if context_data:
             user_prompt_parts.append(f"\nالبيانات المتوفرة:\n{context_data}")
         
-        user_prompt_parts.append("\n**تعليمات مهمة للرد:**")
-        user_prompt_parts.append("1. رد بلهجة نجدية طبيعية وودودة واحترافية")
+        user_prompt_parts.append("\n**تعليمات مهمة للرد (للحصول على رد ذكي ومتسق):**")
+        user_prompt_parts.append("1. رد بلهجة نجدية طبيعية وودودة واحترافية - كن متسقاً في الأسلوب")
         user_prompt_parts.append("2. طول الرد مرن: 2-6 جمل حسب نوع السؤال (بسيط = 2-3 جمل، معقد = 4-6 جمل)")
-        user_prompt_parts.append("3. استخدم السياق بذكاء: اربط الأسئلة الحالية بالمحادثة السابقة")
+        user_prompt_parts.append("3. **استخدم السياق بذكاء دائماً**: اربط الأسئلة الحالية بالمحادثة السابقة. إذا كان هناك سياق، استخدمه!")
         user_prompt_parts.append("4. كن استباقياً: اقترح خطوات تالية أو أسئلة مفيدة")
-        user_prompt_parts.append("5. استخدم جميع المعلومات المتاحة من البيانات")
+        user_prompt_parts.append("5. **استخدم جميع المعلومات المتاحة من البيانات** - لا تتجاهل أي معلومة متوفرة")
         user_prompt_parts.append("6. إذا كان المستخدم يسأل عن شيء تم ذكره في المحادثة السابقة (مثل: 'هل بس هذولا؟' أو 'غيرهم؟' أو 'كم عددهم؟')، استخدم المحادثة السابقة لفهم ما يقصده ورد عليه بناءً على البيانات المتوفرة")
-        user_prompt_parts.append("7. لا تقل 'ما قدرت أفهم' - حاول تفهم من السياق والبيانات ورد بشكل مفيد")
+        user_prompt_parts.append("7. **لا تقل 'ما قدرت أفهم' أبداً** - حاول تفهم من السياق والبيانات ورد بشكل مفيد. إذا كان السؤال غير واضح، اسأل سؤال توضيحي واحد فقط")
+        user_prompt_parts.append("8. **كن متسقاً**: نفس نوع السؤال يجب أن يحصل على نفس مستوى الذكاء والتفصيل في الرد")
         
         user_prompt = "\n".join(user_prompt_parts)
         
@@ -157,7 +173,7 @@ class ChatAgent:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.4,
+                temperature=0.3,  # متوازن: طبيعي لكن متسق
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
@@ -245,13 +261,29 @@ class ChatAgent:
                         suggested_questions=["حجز", "أطباء", "خدمات"]
                     )
             
-            # For unclear/faq intents, try to provide helpful response based on available data
+            # For unclear/faq intents, try to provide helpful response based on available data and context
             if intent in ["unclear", "faq"]:
                 # Check if we have data available
                 from data.handler import data_handler
                 doctors = data_handler.get_doctors()
                 services = data_handler.get_services()
                 branches = data_handler.get_branches()
+                
+                # Try to understand from message keywords
+                message_lower_norm = normalize_ar(message.lower()) if message else ""
+                detected_topic = None
+                
+                # Check for keywords in message
+                if any(word in message_lower_norm for word in ['طبيب', 'دكتور', 'د.']):
+                    detected_topic = "أطباء"
+                elif any(word in message_lower_norm for word in ['خدمة', 'خدمات']):
+                    detected_topic = "خدمات"
+                elif any(word in message_lower_norm for word in ['فرع', 'فروع']):
+                    detected_topic = "فروع"
+                elif any(word in message_lower_norm for word in ['حجز', 'موعد']):
+                    detected_topic = "حجز"
+                elif any(word in message_lower_norm for word in ['دوام', 'ساعات', 'وقت']):
+                    detected_topic = "أوقات الدوام"
                 
                 # Try to understand the message and provide helpful response
                 if doctors or services or branches:
@@ -264,6 +296,39 @@ class ChatAgent:
                     if branches:
                         options.append("فروع")
                     
+                    if detected_topic:
+                        # We detected a topic - provide specific help
+                        if detected_topic == "أطباء" and doctors:
+                            return AgentResponseSchema(
+                                response_text=f"تمام! عندنا أطباء ممتازين. تبي قائمة كل الأطباء ولا تخصص معين؟ (أسنان/جلدية/أطفال/نساء)",
+                                needs_clarification=True,
+                                suggested_questions=["أطباء الأسنان", "أطباء الجلدية", "أطباء الأطفال", "كل الأطباء"]
+                            )
+                        elif detected_topic == "خدمات" and services:
+                            return AgentResponseSchema(
+                                response_text=f"على الرحب! عندنا خدمات متنوعة. تبي قائمة الخدمات ولا خدمة معينة؟",
+                                needs_clarification=True,
+                                suggested_questions=["خدمات الأسنان", "خدمات الجلدية", "كل الخدمات"]
+                            )
+                        elif detected_topic == "فروع" and branches:
+                            return AgentResponseSchema(
+                                response_text=f"أكيد! عندنا فروع في مدن مختلفة. تبي فروع أي مدينة؟ ولا أعطيك كل الفروع؟",
+                                needs_clarification=True,
+                                suggested_questions=["كل الفروع", "فروع الرياض", "فروع جدة"]
+                            )
+                        elif detected_topic == "حجز":
+                            return AgentResponseSchema(
+                                response_text=f"الحجز سهل! قولي اسم الطبيب أو الخدمة اللي تبيها، وأنا أساعدك تحجز. أو قولي 'حجز' للبدء.",
+                                needs_clarification=False,
+                                suggested_questions=["حجز", "أطباء", "خدمات"]
+                            )
+                        elif detected_topic == "أوقات الدوام" and branches:
+                            return AgentResponseSchema(
+                                response_text=f"أقدر أعطيك أوقات الدوام. تبي كل الفروع ولا مدينة معينة؟",
+                                needs_clarification=True,
+                                suggested_questions=["أوقات فروع الرياض", "أوقات فروع جدة", "كل الفروع"]
+                            )
+                    
                     if options:
                         return AgentResponseSchema(
                             response_text=f"أهلاً! كيف أقدر أساعدك؟ عندك استفسار عن: {' أو '.join(options)}؟",
@@ -271,7 +336,7 @@ class ChatAgent:
                             suggested_questions=options + ["حجز", "مواعيد الدوام"]
                         )
             
-            # Last resort - but still helpful
+            # Last resort - but still helpful and consistent
             return AgentResponseSchema(
                 response_text="أهلاً! كيف أقدر أساعدك؟ عندك استفسار عن أطباء أو خدمات أو فروع؟",
                 needs_clarification=True,
