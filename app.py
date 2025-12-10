@@ -5,13 +5,13 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import logging
-import config
+import os
 from routes import webhook, health, chat
 from data.db import initialize_database
 
 # Configure logging
 logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO),
+    level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO').upper(), logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
@@ -25,7 +25,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.ALLOWED_ORIGINS,
+    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(",") if os.getenv("ALLOWED_ORIGINS") else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

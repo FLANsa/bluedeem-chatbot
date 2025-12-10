@@ -5,7 +5,7 @@ import json
 from typing import Dict, Any, Optional, Tuple
 import httpx
 from platforms.base import PlatformHandler
-import config
+import os
 
 
 class WhatsAppHandler(PlatformHandler):
@@ -13,8 +13,8 @@ class WhatsAppHandler(PlatformHandler):
     
     def __init__(self):
         """Initialize WhatsApp handler."""
-        self.webhook_secret = config.WHATSAPP_WEBHOOK_SECRET
-        self.verify_token = config.WHATSAPP_VERIFY_TOKEN
+        self.webhook_secret = os.getenv('WHATSAPP_WEBHOOK_SECRET', '')
+        self.verify_token = os.getenv('WHATSAPP_VERIFY_TOKEN', '')
         # TODO: Add WhatsApp API credentials
         self.api_url = ""  # Meta WhatsApp API URL
         self.access_token = ""  # Meta access token

@@ -1,7 +1,7 @@
 """Intent classification using GPT-4.1-nano with Structured Outputs."""
 from typing import Dict, Any, List
 from openai import OpenAI
-import config
+import os
 from models.schemas import IntentSchema, Entity
 
 
@@ -10,10 +10,11 @@ class IntentClassifier:
     
     def __init__(self):
         """Initialize intent classifier."""
-        if not config.OPENAI_API_KEY:
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
-        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-        self.model = config.LLM_MODEL_INTENT
+        self.client = OpenAI(api_key=api_key)
+        self.model = os.getenv('LLM_MODEL_INTENT', 'gpt-4o-mini')
     
     def classify(self, message: str, context: Dict[str, Any] = None) -> IntentSchema:
         """

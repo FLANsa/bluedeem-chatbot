@@ -7,7 +7,7 @@ from models.booking import BookingTicket, ConversationState
 from data.db import get_database_session
 from utils.phone import validate_phone, normalize_phone
 from utils.date_parser import parse_relative_date
-import config
+import os
 from core.formatter import format_booking_question, format_booking_confirmation
 
 
@@ -144,7 +144,8 @@ class BookingManager:
         self.db.commit()
         
         # Send to Google Apps Script (optional)
-        if config.GOOGLE_APPS_SCRIPT_URL:
+        google_apps_script_url = os.getenv('GOOGLE_APPS_SCRIPT_URL', '')
+        if google_apps_script_url:
             try:
                 self._send_to_google_apps_script(ticket_data)
             except Exception as e:
@@ -162,14 +163,14 @@ class BookingManager:
     
     def _send_to_google_apps_script(self, ticket_data: Dict[str, Any]):
         """Send booking ticket to Google Apps Script."""
-        if not config.GOOGLE_APPS_SCRIPT_URL:
+        if not google_apps_script_url:
             return
         
         try:
             with httpx.Client(timeout=10.0) as client:
                 # Google Apps Script expects form data or query params
                 response = client.post(
-                    config.GOOGLE_APPS_SCRIPT_URL,
+                    google_apps_script_url,
                     json={"action": "create_booking", **ticket_data},
                     follow_redirects=True
                 )

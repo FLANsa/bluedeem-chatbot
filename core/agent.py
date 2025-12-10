@@ -2,7 +2,7 @@
 from typing import Dict, Any, Optional, List
 import json
 from openai import OpenAI
-import config
+import os
 from models.schemas import AgentResponseSchema
 from data.handler import data_handler
 from core.context import context_manager
@@ -13,10 +13,11 @@ class ChatAgent:
     
     def __init__(self):
         """Initialize chat agent."""
-        if not config.OPENAI_API_KEY:
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
-        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-        self.model = config.LLM_MODEL_AGENT
+        self.client = OpenAI(api_key=api_key)
+        self.model = os.getenv('LLM_MODEL_AGENT', 'gpt-4o-mini')
     
     def generate_response(
         self,

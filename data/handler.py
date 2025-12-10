@@ -173,9 +173,14 @@ class DataHandler:
                     credentials_path = str(Path(__file__).parent.parent / credentials_path)
                 
                 self.google_sheets_source = GoogleSheetsSource(
-                    spreadsheet_id=config.GOOGLE_SHEETS_ID,
+                    spreadsheet_id=google_sheets_id,
                     credentials_path=credentials_path if credentials_path else None,
-                    sheet_names=config.GOOGLE_SHEETS_SHEET_NAMES
+                    sheet_names=[
+                        os.getenv('GOOGLE_SHEETS_DOCTORS_SHEET', '01_doctors'),
+                        os.getenv('GOOGLE_SHEETS_BRANCHES_SHEET', '02_branches'),
+                        os.getenv('GOOGLE_SHEETS_SERVICES_SHEET', '03_services'),
+                        os.getenv('GOOGLE_SHEETS_AVAILABILITY_SHEET', '04_doctor_availability')
+                    ]
                 )
                 import logging
                 logging.info("Google Sheets source initialized")

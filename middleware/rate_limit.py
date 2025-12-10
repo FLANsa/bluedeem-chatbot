@@ -2,7 +2,7 @@
 from typing import Dict
 from datetime import datetime, timedelta
 from collections import defaultdict
-import config
+import os
 
 
 class RateLimiter:
@@ -11,7 +11,7 @@ class RateLimiter:
     def __init__(self):
         """Initialize rate limiter."""
         self.requests: Dict[str, list] = defaultdict(list)
-        self.max_requests = config.RATE_LIMIT_PER_MINUTE
+        self.max_requests = int(os.getenv('RATE_LIMIT_PER_MINUTE', '10'))
         self.window_seconds = 60
     
     def is_allowed(self, user_id: str) -> bool:
