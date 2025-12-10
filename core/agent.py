@@ -1,11 +1,13 @@
 """LLM agent using GPT-4.1-mini with Structured Outputs and Function Calling."""
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 import json
 from openai import OpenAI
 import os
-from models.schemas import AgentResponseSchema
+from cachetools import TTLCache
+from models.schemas import AgentResponseSchema, make_schema_strict
 from data.handler import data_handler
 from core.context import context_manager
+from utils.arabic_normalizer import normalize_ar
 
 
 class ChatAgent:
@@ -18,6 +20,9 @@ class ChatAgent:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         self.client = OpenAI(api_key=api_key)
         self.model = os.getenv('LLM_MODEL_AGENT', 'gpt-4o-mini')
+        self._schema = make_schema_strict(AgentResponseSchema.model_json_schema())
+        # Cache responses for short window to reduce cost on repeated asks
+        self._response_cache = TTLCache(maxsize=300, ttl=120)
     
     def generate_response(
         self,
@@ -41,74 +46,59 @@ class ChatAgent:
         Returns:
             AgentResponseSchema with response_text, needs_clarification, suggested_questions
         """
-        system_prompt = """أنت مساعد شخصي ذكي وودود لشات بوت عيادة "بلو ديم". أنت مساعد طبيعي ومفيد.
+        # Quick cache for repeated messages (same intent + normalized message + entities)
+        cache_key = None
+        try:
+            norm_msg = normalize_ar(message) if message else ""
+            ent_key = tuple(sorted([f"{e.get('type','')}:{e.get('value','')}" for e in entities]))
+            cache_key = (intent, norm_msg, ent_key)
+            if cache_key in self._response_cache:
+                cached = self._response_cache[cache_key]
+                return AgentResponseSchema(**cached)
+        except Exception:
+            pass
 
-**مهمتك الأساسية:**
-- اكتشف تلقائياً ما يريده العميل من رسالته
-- ارد بطريقة ذكية وكاملة ومفيدة - استخدم البيانات المتاحة من Google Sheets
-- **مهم جداً:** عندما يسأل عن "أطباء" أو "فروع" أو "خدمات"، اعرض القائمة بشكل مختصر مع المعلومات الأساسية فقط
-- **مهم جداً:** عندما يسأل "مين أطباء الأسنان"، اعرض أسماء الأطباء فقط بشكل مختصر
-- استخدم البيانات المتاحة بشكل طبيعي في ردك - لا تخترع معلومات
-- لا تستخدم قوالب ثابتة - كن طبيعياً وذكياً ومفيداً
-- **كن مختصراً جداً - لا تكرر المعلومات ولا تطول في الشرح (2-3 جمل كحد أقصى)**
-- إذا سأل عن قائمة، قدم القائمة بشكل مختصر مع المعلومات الأساسية فقط
-- **مهم جداً:** إذا سأل عن الأطباء أو الخدمات، لا تبدأ عملية الحجز تلقائياً - فقط قدم المعلومات
-- **لا تبدأ الحجز إلا إذا طلب المستخدم ذلك صراحة (مثل "ابي احجز" أو "حجز")**
-- **استخدم البيانات من Google Sheets دائماً - لا تقل "ما عندي معلومات" إذا كانت البيانات متوفرة**
-- كن ودوداً وطبيعياً في اللهجة النجدية - لكن مختصراً جداً
+        FAST_INTENTS = {"greeting", "thanks", "goodbye"}
+        if intent in FAST_INTENTS:
+            if intent == "greeting":
+                return AgentResponseSchema(
+                    response_text="هلا والله 👋 شلون أقدر أخدمك؟ تبي أطباء ولا خدمات ولا فروع؟",
+                    needs_clarification=True,
+                    suggested_questions=["أطباء", "خدمات", "فروع", "مواعيد الدوام", "حجز"]
+                )
+            if intent == "thanks":
+                return AgentResponseSchema(
+                    response_text="العفو والله ✅ إذا تبي أي شي أنا حاضر.",
+                    needs_clarification=False,
+                    suggested_questions=["أطباء", "خدمات", "فروع", "حجز"]
+                )
+            if intent == "goodbye":
+                return AgentResponseSchema(
+                    response_text="حياك الله 👋 بأي وقت تحتاجنا.",
+                    needs_clarification=False,
+                    suggested_questions=[]
+                )
 
-**الشخصية والأسلوب:**
-1. استخدم اللهجة النجدية 100% (بدون فصحى) - طبيعية وودودة
-2. كن طبيعياً في الرد - ردود متعددة الجمل لكن مختصرة (2-3 جمل كحد أقصى)
-3. استخدم السياق من المحادثة السابقة لفهم ما يقصده المستخدم
-4. إذا ذكر المستخدم شيئاً سابقاً (مثل "هو" أو "الطبيب" أو "الفرع")، استخدم السياق لفهمه
-5. كن استباقياً - اقترح أشياء مفيدة بناءً على السياق
-6. لا تكرر نفس المعلومات إلا إذا طلب المستخدم ذلك
-7. لا تخترع معلومات - استخدم فقط البيانات المتوفرة
-8. إذا غير واضح: ابدأ بـ "عذراً" + قدم خيارات (أطباء/فروع/خدمات/حجز)
-9. استخدم الإيموجي باعتدال: ✅ 📍 ⏰ 💰 ⚠️ ⭐
+        system_prompt = """أنت \"مساعد بلو ديم\" 🏥 شات بوت عيادة. رد بلهجة نجدية طبيعية، مفيد جداً ومختصر.
 
-**اللهجة النجدية الطبيعية:**
-- استخدم "أنا" بدل "أنا"
-- استخدم "شلون" بدل "كيف"
-- استخدم "وين" بدل "أين"
-- استخدم "شلونك" بدل "كيف حالك"
-- استخدم "الله يعطيك العافية" بدل "شكراً لك"
-- كن طبيعياً وودوداً - مثل صديق يساعدك
+قواعد أساسية:
+1) الرد دائماً 1–3 جمل فقط (<= 240 حرف).
+2) لا تخترع أي معلومة؛ استخدم فقط البيانات المتوفرة في الرسالة.
+3) إذا ما فيه بيانات كافية: اسأل سؤال توضيحي واحد + اقترح 2–4 خيارات.
+4) لا تبدأ الحجز إلا بطلب صريح (\"ابي احجز\"/\"حجز\"/\"ابي موعد\").
+5) قوائم (أطباء/فروع/خدمات): اعرض 3–6 عناصر مختصرة مع أهم معلومة.
+6) إيموجي قليلة: ✅ 📍 ⏰ 💰 (حد أقصى 2).
 
-**فهم السياق:**
-- استخدم المحادثة السابقة لفهم ما يقصده المستخدم
-- إذا قال "هو" أو "هي"، راجع السياق لفهم من يقصد
-- إذا سأل عن شيء ذكرناه سابقاً، استخدم المعلومات السابقة
-- كن ذكياً في ربط المعلومات
+شكل الرد حسب intent:
+- greeting: رحّب بسرعة + خيارات (أطباء/خدمات/فروع/دوام/حجز).
+- doctor: لو doctor_name اعرض التخصص + الفرع + أوقات مختصرة. لو قائمة/تخصص اعرض 3–6 أسماء فقط ثم اسأل عن التخصص.
+- service: لو service_name اعرض وصف قصير + السعر/المدة إن وجدت. لو قائمة اعرض 3–6 خدمات مع السعر إن وجد.
+- branch: اعرض 2–4 فروع مع المدينة/عنوان مختصر + رقم/رابط إن وجد.
+- hours: اعرض ساعات الدوام لكل فرع بسطرين كحد أقصى.
+- booking: إذا طلب الحجز صراحة اطلب 2–3 معلومات (الاسم، الجوال، الطبيب/الخدمة، الوقت المفضل).
+- general/faq/contact: جاوب باختصار اعتماداً على البيانات، وإذا مبهم اسأل سؤال واحد فقط.
 
-**الرد على الأسئلة العامة:**
-- عند السؤال "ما اسمك؟" أو "من أنت؟": رد بـ "اسمي مساعد بلو ديم 🏥" + توجيه للخدمات المتاحة
-- عند "عندي استفسار": رد بطريقة ودودة "أهلاً! كيف أقدر أساعدك؟ عندك استفسار عن إيش؟ (أطباء/خدمات/حجز)"
-- عند "كيف أحجز؟": اشرح خطوات الحجز بشكل بسيط + توجيه للبدء
-- عند "وين العيادة؟": اعرض الفروع المتاحة مع عناوينها
-- عند أي سؤال عام متعلق بالعيادة: رد بشكل مفيد + قدم خيارات للخدمات المتاحة
-
-**الرد على أسئلة الدوام/الأوقات:**
-- عند "متى تفتحون؟" أو "متى اوقات الدوام؟": استخدم بيانات الفروع (hours_weekdays و hours_weekend) لعرض أوقات الدوام لكل فرع
-- عند "متى تفتح الفروع؟": اعرض أوقات الدوام لكل فرع من بيانات الفروع
-- استخدم البيانات المتاحة من Google Sheets - لا تخترع أوقات
-- كن مختصراً - اعرض الأوقات بشكل واضح ومباشر
-- مثال: "⏰ دوامنا: الأحد-الخميس: 9 صباحاً - 6 مساءً، الجمعة-السبت: 2 مساءً - 8 مساءً"
-
-**أمثلة على الردود المختصرة:**
-- عند "أطباء": "عندنا أطباء في تخصصات مختلفة. مين تبي؟ (أسنان/جلدية/أطفال/نساء)"
-- عند "خدمات": "خدماتنا متنوعة. عندك استفسار عن خدمة معينة؟"
-- عند "مين أطباء الأسنان": "أطباء الأسنان: د. محمد العتيبي، د. فاطمة السالم"
-- عند "مين الاطباء الي عندكم": "عندنا أطباء في تخصصات مختلفة: أسنان، جلدية، أطفال، نساء وولادة، عظام. مين تبي؟"
-- عند "الدكتورة سارة ب اي فرع": "الدكتورة سارة في فرع الرياض - العليا"
-- عند "متى تفتحون؟": "⏰ دوامنا: الأحد-الخميس: 9 صباحاً - 6 مساءً، الجمعة-السبت: 2 مساءً - 8 مساءً"
-
-**تذكر:**
-- **مختصر جداً (2-3 جمل كحد أقصى)**
-- **استخدم البيانات المتاحة دائماً**
-- **لا تبدأ الحجز إلا إذا طلب صراحة**
-- **كن طبيعياً وودوداً لكن مختصراً**"""
+مخرجاتك يجب أن تكون JSON يطابق schema (response_text, needs_clarification, suggested_questions). response_text لازم يكون عربي نجدي مختصر وواضح."""
         
         # Get conversation history context
         conversation_context = ""
@@ -139,41 +129,33 @@ class ChatAgent:
         user_prompt = "\n".join(user_prompt_parts)
         
         try:
-            # Use create() with response_format for structured outputs
-            # In OpenAI 1.12.0, structured outputs use response_format with json_schema
-            from models.schemas import AgentResponseSchema
-            import json
-            
-            # Get JSON schema from Pydantic model
-            json_schema = AgentResponseSchema.model_json_schema()
-            # OpenAI requires additionalProperties: false
-            json_schema["additionalProperties"] = False
-            # OpenAI requires all properties to be in required array
-            if "properties" in json_schema:
-                json_schema["required"] = list(json_schema["properties"].keys())
-            
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
+                temperature=0,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
                         "name": "agent_response",
-                        "schema": json_schema,
+                        "schema": self._schema,
                         "strict": True
                     }
                 }
             )
             
-            # Parse the response
             content = response.choices[0].message.content
             if content:
                 try:
                     data = json.loads(content)
                     result = AgentResponseSchema(**data)
+                    try:
+                        if cache_key:
+                            self._response_cache[cache_key] = result.dict()
+                    except Exception:
+                        pass
                     return result
                 except Exception as parse_error:
                     raise Exception(f"Failed to parse response: {parse_error}")
@@ -181,33 +163,66 @@ class ChatAgent:
                 raise Exception("Empty response from API")
             
         except Exception as e:
-            # Log error for debugging
             import logging
-            logging.error(f"Agent error: {e}")
-            # Fallback response - but try to be helpful for general questions
+            logging.exception(f"Agent error: {e}")
+            message_lower = message.lower()
+
+            if intent == "doctor":
+                return AgentResponseSchema(
+                    response_text="تمام ✅ تبي قائمة كل الأطباء ولا تخصص معيّن؟ (أسنان/جلدية/أطفال/نساء)",
+                    needs_clarification=True,
+                    suggested_questions=["أطباء الأسنان", "أطباء الجلدية", "أطباء الأطفال", "كل الأطباء"]
+                )
+            if intent == "branch":
+                return AgentResponseSchema(
+                    response_text="أكيد 📍 تبي فروع أي مدينة؟ ولا أعطيك كل الفروع؟",
+                    needs_clarification=True,
+                    suggested_questions=["كل الفروع", "فروع الرياض", "فروع جدة"]
+                )
+            if intent == "service":
+                return AgentResponseSchema(
+                    response_text="على الرحب والسعة 💡 تبي قائمة الخدمات ولا خدمة معينة؟",
+                    needs_clarification=True,
+                    suggested_questions=["خدمات الأسنان", "خدمات الجلدية", "كل الخدمات"]
+                )
+            if intent == "booking":
+                return AgentResponseSchema(
+                    response_text="أساعدك بالحجز. عطيني اسمك ورقمك والخدمة أو الطبيب المفضل.",
+                    needs_clarification=True,
+                    suggested_questions=["حجز مع طبيب أسنان", "حجز خدمة جلدية", "حجز قريب موعد"]
+                )
+            if intent == "hours":
+                return AgentResponseSchema(
+                    response_text="أقدر أعطيك أوقات الدوام. تبي كل الفروع ولا مدينة معينة؟",
+                    needs_clarification=True,
+                    suggested_questions=["أوقات فروع الرياض", "أوقات فروع جدة", "كل الفروع"]
+                )
+            if intent == "contact":
+                return AgentResponseSchema(
+                    response_text="للتواصل: تبي أرقام أو موقع الفروع؟",
+                    needs_clarification=True,
+                    suggested_questions=["أرقام الفروع", "مواقع الفروع"]
+                )
             if intent == "general":
-                # For general questions, provide a more helpful fallback
-                message_lower = message.lower()
                 if "اسمك" in message_lower or "من أنت" in message_lower or "مين انت" in message_lower:
                     return AgentResponseSchema(
                         response_text="اسمي مساعد بلو ديم 🏥 كيف أقدر أساعدك اليوم؟ عندك استفسار عن أطباء أو خدمات أو حجز؟",
                         needs_clarification=False,
                         suggested_questions=["أطباء", "خدمات", "حجز", "فروع"]
                     )
-                elif "استفسار" in message_lower or "سؤال" in message_lower:
+                if "استفسار" in message_lower or "سؤال" in message_lower:
                     return AgentResponseSchema(
                         response_text="أهلاً! كيف أقدر أساعدك؟ عندك استفسار عن إيش؟ (أطباء/خدمات/حجز/فروع)",
                         needs_clarification=True,
                         suggested_questions=["أطباء", "خدمات", "حجز", "فروع"]
                     )
-                elif "كيف أحجز" in message_lower or "كيف احجز" in message_lower:
+                if "كيف أحجز" in message_lower or "كيف احجز" in message_lower:
                     return AgentResponseSchema(
                         response_text="الحجز سهل! قولي اسم الطبيب أو الخدمة اللي تبيها، وأنا أساعدك تحجز. أو قولي 'حجز' للبدء.",
                         needs_clarification=False,
                         suggested_questions=["حجز", "أطباء", "خدمات"]
                     )
-            
-            # Default fallback
+
             return AgentResponseSchema(
                 response_text="عذراً، ما قدرت أفهم طلبك. جرب تسأل عن أطباء أو فروع أو خدمات.",
                 needs_clarification=True,
@@ -215,7 +230,11 @@ class ChatAgent:
             )
     
     def _prepare_context(self, intent: str, entities: List[Dict[str, Any]], context: Dict[str, Any] = None, relevant_data: Dict[str, Any] = None, message: str = "") -> str:
-        """Prepare comprehensive context data for LLM to generate intelligent responses."""
+        """Prepare context data for LLM. Keep it minimal to reduce failures."""
+        FAST_INTENTS = {"greeting", "thanks", "goodbye"}
+        if intent in FAST_INTENTS:
+            return ""
+
         context_parts = []
         
         # Extract entity values
@@ -238,7 +257,8 @@ class ChatAgent:
         if relevant_data is None:
             relevant_data = {}
         
-        message_lower = message.lower() if message else ""
+        message_lower = normalize_ar(message) if message else ""
+        MAX_ITEMS = 12
         
         # Prepare comprehensive context based on intent
         if intent == "doctor":
@@ -270,7 +290,7 @@ class ChatAgent:
             specialty_found = None
             for keyword, specialty in specialty_keywords.items():
                 if keyword in message_lower:
-                    filtered_doctors = [d for d in doctors if d.get('specialty', '') == specialty]
+                    filtered_doctors = [d for d in doctors if normalize_ar(d.get('specialty', '')) == normalize_ar(specialty)]
                     specialty_found = specialty
                     if filtered_doctors:
                         break
@@ -322,9 +342,10 @@ class ChatAgent:
                         "time_from": doc.get('time_from', ''),
                         "time_to": doc.get('time_to', '')
                     })
-                context_parts.append(f"أطباء {specialty_found} ({len(filtered_doctors)} طبيب):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
+                total = len(filtered_doctors)
+                doctors_list = doctors_list[:MAX_ITEMS]
+                context_parts.append(f"أطباء {specialty_found} (عرض {len(doctors_list)} من أصل {total}):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
             elif doctors:
-                # All doctors - show in compact format
                 doctors_list = []
                 for doc in doctors:
                     doctors_list.append({
@@ -335,10 +356,11 @@ class ChatAgent:
                         "time_from": doc.get('time_from', ''),
                         "time_to": doc.get('time_to', '')
                     })
-                context_parts.append(f"الأطباء ({len(doctors)} طبيب):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
+                total = len(doctors_list)
+                doctors_list = doctors_list[:MAX_ITEMS]
+                context_parts.append(f"الأطباء (عرض {len(doctors_list)} من أصل {total}):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
         
         elif intent == "service":
-            # Always get services data
             if 'services' in relevant_data:
                 services = relevant_data['services']
             elif 'all_services' in relevant_data:
@@ -347,10 +369,8 @@ class ChatAgent:
                 services = data_handler.get_services()
             
             if service_name:
-                # Specific service requested - include all available information
                 service = data_handler.find_service_by_name(service_name)
                 if service:
-                    # Include comprehensive service information
                     service_info = {
                         "service_name": service.get('service_name', ''),
                         "specialty": service.get('specialty', ''),
@@ -362,22 +382,15 @@ class ChatAgent:
                         "available_branch_ids": service.get('available_branch_ids', ''),
                         "popular": service.get('popular', '')
                     }
-                    context_parts.append(f"معلومات الخدمة المطلوبة (استخدم جميع المعلومات المتاحة):\n{json.dumps(service_info, ensure_ascii=False, indent=2)}")
+                    context_parts.append(f"معلومات الخدمة المطلوبة:\n{json.dumps(service_info, ensure_ascii=False, indent=2)}")
                     
-                    # Get branches where service is available
                     available_branch_ids = service.get('available_branch_ids', [])
                     if available_branch_ids:
                         branches = data_handler.get_branches()
                         available_branches = [b for b in branches if b.get('branch_id') in available_branch_ids]
                         if available_branches:
-                            context_parts.append(f"الفروع المتاحة للخدمة:\n{json.dumps(available_branches, ensure_ascii=False, indent=2)}")
-                    else:
-                        # If no specific branches, show all branches
-                        branches = data_handler.get_branches()
-                        if branches:
-                            context_parts.append(f"الفروع المتاحة:\n{json.dumps(branches, ensure_ascii=False, indent=2)}")
+                            context_parts.append(f"الفروع المتاحة للخدمة:\n{json.dumps(available_branches[:MAX_ITEMS], ensure_ascii=False, indent=2)}")
             elif services:
-                # All services - show in compact format
                 services_list = []
                 for svc in services:
                     services_list.append({
@@ -386,7 +399,9 @@ class ChatAgent:
                         "price_sar": svc.get('price_sar', ''),
                         "duration_minutes": svc.get('duration_minutes', '')
                     })
-                context_parts.append(f"الخدمات ({len(services)} خدمة):\n{json.dumps(services_list, ensure_ascii=False, indent=2)}")
+                total = len(services_list)
+                services_list = services_list[:MAX_ITEMS]
+                context_parts.append(f"الخدمات (عرض {len(services_list)} من أصل {total}):\n{json.dumps(services_list, ensure_ascii=False, indent=2)}")
         
         elif intent == "branch":
             # Always get branches data
@@ -403,7 +418,6 @@ class ChatAgent:
                 if branch:
                     context_parts.append(f"معلومات الفرع المطلوب:\n{json.dumps(branch, ensure_ascii=False, indent=2)}")
             elif branches:
-                # All branches - show in compact format
                 branches_list = []
                 for branch in branches:
                     branches_list.append({
@@ -414,7 +428,9 @@ class ChatAgent:
                         "hours_weekdays": branch.get('hours_weekdays', ''),
                         "hours_weekend": branch.get('hours_weekend', '')
                     })
-                context_parts.append(f"الفروع ({len(branches)} فرع):\n{json.dumps(branches_list, ensure_ascii=False, indent=2)}")
+                total = len(branches_list)
+                branches_list = branches_list[:MAX_ITEMS]
+                context_parts.append(f"الفروع (عرض {len(branches_list)} من أصل {total}):\n{json.dumps(branches_list, ensure_ascii=False, indent=2)}")
         
         # For hours questions, provide branch hours information
         elif intent == "hours":
@@ -437,90 +453,21 @@ class ChatAgent:
                         "city": branch.get('city', '')
                     }
                     branches_list.append(branch_info)
-                context_parts.append(f"أوقات الدوام للفروع:\n{json.dumps(branches_list, ensure_ascii=False, indent=2)}")
+                total = len(branches_list)
+                branches_list = branches_list[:MAX_ITEMS]
+                context_parts.append(f"أوقات الدوام للفروع (عرض {len(branches_list)} من أصل {total}):\n{json.dumps(branches_list, ensure_ascii=False, indent=2)}")
         
-        # For general questions, provide clinic information in compact format
+        # For general questions، قدم ملخصاً صغيراً فقط
         elif intent == "general":
-            # Add available doctors (with more details)
-            doctors = data_handler.get_doctors()
-            if doctors:
-                doctors_list = []
-                for d in doctors:
-                    doctors_list.append({
-                        "doctor_name": d.get('doctor_name', ''),
-                        "specialty": d.get('specialty', ''),
-                        "branch_id": d.get('branch_id', ''),
-                        "phone": d.get('phone', '')
-                    })
-                context_parts.append(f"الأطباء ({len(doctors)} طبيب):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
-            
-            # Add available services (with more details)
-            services = data_handler.get_services()
-            if services:
-                services_list = []
-                for s in services:
-                    services_list.append({
-                        "service_name": s.get('service_name', ''),
-                        "specialty": s.get('specialty', ''),
-                        "price_sar": s.get('price_sar', ''),
-                        "duration_minutes": s.get('duration_minutes', ''),
-                        "description": s.get('description', '')
-                    })
-                context_parts.append(f"الخدمات ({len(services)} خدمة):\n{json.dumps(services_list, ensure_ascii=False, indent=2)}")
-            
-            # Add available branches (with more details)
-            branches = data_handler.get_branches()
-            if branches:
-                branches_list = []
-                for b in branches:
-                    branches_list.append({
-                        "branch_name": b.get('branch_name', ''),
-                        "address": b.get('address', ''),
-                        "city": b.get('city', ''),
-                        "phone": b.get('phone', ''),
-                        "hours_weekdays": b.get('hours_weekdays', ''),
-                        "hours_weekend": b.get('hours_weekend', '')
-                    })
-                context_parts.append(f"الفروع ({len(branches)} فرع):\n{json.dumps(branches_list, ensure_ascii=False, indent=2)}")
+            try:
+                counts = {
+                    "doctors": len(data_handler.get_doctors() or []),
+                    "services": len(data_handler.get_services() or []),
+                    "branches": len(data_handler.get_branches() or [])
+                }
+                context_parts.append(f"ملخص سريع: أطباء={counts['doctors']}, خدمات={counts['services']}, فروع={counts['branches']}")
+            except Exception:
+                pass
         
-        # Always include general data if not already included (with more details)
-        if not context_parts:
-            doctors = data_handler.get_doctors()
-            services = data_handler.get_services()
-            branches = data_handler.get_branches()
-            if doctors:
-                doctors_list = []
-                for d in doctors:
-                    doctors_list.append({
-                        "doctor_name": d.get('doctor_name', ''),
-                        "specialty": d.get('specialty', ''),
-                        "branch_id": d.get('branch_id', ''),
-                        "phone": d.get('phone', '')
-                    })
-                context_parts.append(f"الأطباء ({len(doctors)} طبيب):\n{json.dumps(doctors_list, ensure_ascii=False, indent=2)}")
-            if services:
-                services_list = []
-                for s in services:
-                    services_list.append({
-                        "service_name": s.get('service_name', ''),
-                        "specialty": s.get('specialty', ''),
-                        "price_sar": s.get('price_sar', ''),
-                        "duration_minutes": s.get('duration_minutes', ''),
-                        "description": s.get('description', '')
-                    })
-                context_parts.append(f"الخدمات ({len(services)} خدمة):\n{json.dumps(services_list, ensure_ascii=False, indent=2)}")
-            if branches:
-                branches_list = []
-                for b in branches:
-                    branches_list.append({
-                        "branch_name": b.get('branch_name', ''),
-                        "address": b.get('address', ''),
-                        "city": b.get('city', ''),
-                        "phone": b.get('phone', ''),
-                        "hours_weekdays": b.get('hours_weekdays', ''),
-                        "hours_weekend": b.get('hours_weekend', '')
-                    })
-                context_parts.append(f"الفروع ({len(branches)} فرع):\n{json.dumps(branches_list, ensure_ascii=False, indent=2)}")
-        
-        return "\n\n".join(context_parts) if context_parts else "لا توجد بيانات محددة"
+        return "\n\n".join(context_parts)
 

@@ -3,6 +3,29 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
+def make_schema_strict(schema: dict) -> dict:
+    """Recursively enforce OpenAI Structured Outputs strictness."""
+    if isinstance(schema, dict):
+        t = schema.get("type")
+        if t == "object":
+            schema["additionalProperties"] = False
+            props = schema.get("properties", {})
+            schema["required"] = list(props.keys())
+            for k, v in props.items():
+                props[k] = make_schema_strict(v)
+        elif t == "array":
+            if "items" in schema:
+                schema["items"] = make_schema_strict(schema["items"])
+        else:
+            for key in ("anyOf", "oneOf", "allOf"):
+                if key in schema and isinstance(schema[key], list):
+                    schema[key] = [make_schema_strict(s) for s in schema[key]]
+        for key in ("$defs", "definitions"):
+            if key in schema and isinstance(schema[key], dict):
+                schema[key] = {k: make_schema_strict(v) for k, v in schema[key].items()}
+    return schema
+
+
 class Entity(BaseModel):
     """Entity extracted from user message."""
     type: str = Field(..., description="Entity type: doctor_name, service_name, branch_id, phone, date, time")

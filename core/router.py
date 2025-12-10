@@ -1,8 +1,7 @@
 """Router layer: intent → data lookup → formatter/LLM decision."""
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, List
 from core.intent import IntentClassifier
 from core.agent import ChatAgent
-# Removed formatter imports - using LLM for all responses
 from core.booking import BookingManager
 from data.handler import data_handler
 from utils.date_parser import parse_relative_date
@@ -10,7 +9,6 @@ from core.context import context_manager
 try:
     from core.learning import learning_system
 except ImportError:
-    # Fallback if learning module doesn't exist
     learning_system = None
 
 
@@ -47,35 +45,25 @@ class Router:
             user_id, platform, limit=10
         )
         
-        # Check if user is in booking flow (only if explicitly started)
         booking_state = self.booking_manager.get_state(user_id, platform)
         if booking_state:
-            # Only process booking if user is actually in booking flow
-            # Check if message is trying to cancel or exit booking
             message_lower = message.lower().strip()
-            if any(word in message_lower for word in ['الغاء', 'إلغاء', 'خروج', 'خروج', 'لا', 'لا أريد', 'لا اريد']):
-                # Clear booking state
+            if any(word in message_lower for word in ['الغاء', 'إلغاء', 'خروج', 'لا', 'لا أريد', 'لا اريد']):
                 self.booking_manager.clear_state(user_id, platform)
                 response = "تم إلغاء الحجز. كيف أقدر أساعدك؟"
                 context_manager.add_to_context(user_id, platform, message, response)
                 return response
             
-            response, is_complete = self.booking_manager.process_message(
-                user_id, platform, message
-            )
-            # Save to history
+            response, _ = self.booking_manager.process_message(user_id, platform, message)
             context_manager.add_to_context(user_id, platform, message, response)
             return response
         
-        # Classify intent (can use conversation history for better classification)
         intent_result = self.intent_classifier.classify(message, context)
         intent = intent_result.intent
         entities = [e.dict() for e in intent_result.entities]
         next_action = intent_result.next_action
         
-        # Handle unclear intent - add smart fallback for simple greetings
         if intent == "unclear":
-            # Check if it's a simple greeting that was misclassified
             from utils.arabic_normalizer import normalize_ar
             message_normalized = normalize_ar(message)
             message_lower = message_normalized.lower().strip()
@@ -89,11 +77,9 @@ class Router:
                 message_clean.startswith('اهلا') or
                 message_original_lower.startswith('هلا') or
                 message_original_lower.startswith('اهلا')):
-                # Reclassify as greeting
                 intent = "greeting"
                 next_action = "use_llm"
             else:
-                # For other unclear messages, use LLM to handle
                 response = self._use_llm(
                     message, intent, entities, context,
                     user_id, platform, conversation_history
@@ -101,30 +87,24 @@ class Router:
                 context_manager.add_to_context(user_id, platform, message, response)
                 return response
         
-        # Handle general questions first - direct to LLM
+        # Handle general questions - direct to LLM
         if intent == "general":
             response = self._use_llm(
                 message, intent, entities, context,
                 user_id, platform, conversation_history
             )
-            # Learn from interaction
             if learning_system:
                 learning_system.learn_from_interaction(
                     user_id, platform, message, response, intent, entities
                 )
-            # Save to history
             context_manager.add_to_context(user_id, platform, message, response)
             return response
         
-        # Handle booking intent - check for booking requests even if not classified as booking
-        # Also handle cases like "ابي احجز عنده" where context is needed
+        # Handle booking intent
         message_lower = message.lower().strip()
         explicit_booking_keywords = ['ابي احجز', 'اريد احجز', 'حاب احجز', 'ابي احجز عنده', 'اريد احجز عنده']
-        
-        # Check if message contains booking intent (even if not classified as booking)
         is_booking_request = any(keyword in message_lower for keyword in explicit_booking_keywords)
         
-        # If booking request detected, try to extract doctor name from context
         if is_booking_request or (intent == "booking" and next_action == "start_booking"):
             # Check if there's a doctor name in entities
             doctor_name = None
@@ -136,7 +116,6 @@ class Router:
             # If no doctor name in entities, try to extract from conversation history
             if not doctor_name and conversation_history:
                 # Look for doctor names in recent conversation
-                from data.handler import data_handler
                 doctors = data_handler.get_doctors()
                 for hist_item in reversed(conversation_history[:5]):  # Check last 5 messages
                     hist_message = hist_item.get('message', '').lower()
@@ -160,35 +139,22 @@ class Router:
             
             # Check if message is just "حجز" or "احجز" - treat as question, not booking request
             if message_lower.strip() in ['حجز', 'احجز', 'موعد']:
-                # User is asking about booking, not requesting to book - use LLM to explain
                 is_explicit_booking = False
             else:
-                # Check for explicit booking intent
                 is_explicit_booking = is_booking_request or (intent == "booking" and next_action == "start_booking")
-                
-                # If doctor name found with "عند" or "عنده", it's likely a booking request
                 if not is_explicit_booking and doctor_name and ('عند' in message_lower or 'عنده' in message_lower):
                     is_explicit_booking = True
             
             if is_explicit_booking:
-                # Clear any existing booking state first
                 self.booking_manager.clear_state(user_id, platform)
-                
-                # If doctor name found, start booking with doctor pre-filled
                 if doctor_name:
-                    # Start booking with doctor name
                     self.booking_manager.set_state(user_id, platform, "name", {"doctor_name": doctor_name})
                     response = f"✅ حجز عند {doctor_name}\n\nما اسمك؟"
-                    context_manager.add_to_context(user_id, platform, message, response)
-                    return response
-                
-                # Start booking flow
-                response, _ = self.booking_manager.process_message(user_id, platform, message)
+                else:
+                    response, _ = self.booking_manager.process_message(user_id, platform, message)
                 context_manager.add_to_context(user_id, platform, message, response)
                 return response
             elif intent == "booking" and next_action != "start_booking":
-                # User is asking about booking but not explicitly requesting it - use LLM to explain
-                # This handles cases like "حجز" (just asking about booking)
                 response = self._use_llm(
                     message, intent, entities, context,
                     user_id, platform, conversation_history
@@ -196,19 +162,31 @@ class Router:
                 context_manager.add_to_context(user_id, platform, message, response)
                 return response
         
-        # Handle hours intent - gather branch data and use LLM
         if intent == "hours":
-            # Gather branch data for hours information
-            relevant_data = self._gather_relevant_data(intent, entities)
-            response = self._use_llm(
-                message, intent, entities, context,
-                user_id, platform, conversation_history,
-                relevant_data=relevant_data
-            )
+            branches = data_handler.get_branches()
+            if not branches:
+                response = "⚠️ ما لقيت معلومات عن الدوام حالياً."
+            else:
+                hours_list = []
+                for branch in branches:
+                    name = branch.get('branch_name', '')
+                    weekdays = branch.get('hours_weekdays', '')
+                    weekend = branch.get('hours_weekend', '')
+                    if name:
+                        hours_info = f"{name}:"
+                        if weekdays:
+                            hours_info += f" الأسبوع: {weekdays}"
+                        if weekend:
+                            hours_info += f" | نهاية الأسبوع: {weekend}"
+                        hours_list.append(hours_info)
+                
+                if hours_list:
+                    response = "⏰ أوقات الدوام:\n\n" + "\n".join([f"{i+1}. {h}" for i, h in enumerate(hours_list)])
+                else:
+                    response = "⚠️ ما لقيت معلومات عن الدوام حالياً."
             context_manager.add_to_context(user_id, platform, message, response)
             return response
         
-        # Handle thanks and goodbye intents directly
         if intent == "thanks":
             response = "الله يعطيك العافية! 😊 إذا عندك أي استفسار ثاني، أنا موجود."
             context_manager.add_to_context(user_id, platform, message, response)
@@ -219,33 +197,63 @@ class Router:
             context_manager.add_to_context(user_id, platform, message, response)
             return response
         
-        # For simple queries, use direct formatter for speed
-        # Only use LLM for complex queries or when context is needed
+        if intent == "contact":
+            branches = data_handler.get_branches()
+            if branches:
+                contact_info = []
+                for branch in branches:
+                    name = branch.get('branch_name', '')
+                    phone = branch.get('phone', '')
+                    email = branch.get('email', '')
+                    address = branch.get('address', '')
+                    city = branch.get('city', '')
+                    if name:
+                        info = f"{name}"
+                        if phone:
+                            info += f"\n📞 {phone}"
+                        if email:
+                            info += f"\n📧 {email}"
+                        if address:
+                            info += f"\n📍 {address}"
+                        if city:
+                            info += f", {city}"
+                        contact_info.append(info)
+                
+                if contact_info:
+                    response = "📞 معلومات التواصل:\n\n" + "\n\n".join([f"{i+1}. {info}" for i, info in enumerate(contact_info)])
+                else:
+                    response = "📞 للتواصل: تواصل معنا على الأرقام المتاحة في الفروع."
+            else:
+                response = "📞 للتواصل: تواصل معنا على الأرقام المتاحة في الفروع."
+            context_manager.add_to_context(user_id, platform, message, response)
+            return response
+        
+        if intent == "faq":
+            message_lower = message.lower()
+            if not any(word in message_lower for word in ['كيف', 'طريقة', 'خطوات']):
+                # Common FAQ - direct response
+                response = "عذراً، ما قدرت أفهم سؤالك بالضبط. تبي تعرف عن:\n• أطباء\n• فروع\n• خدمات\n• حجز"
+                context_manager.add_to_context(user_id, platform, message, response)
+                return response
+        
         if intent in ["doctor", "service", "branch"]:
-            # Always try direct response first for speed (especially for simple list requests)
-            response = self._respond_directly(intent, entities, message, relevant_data={})
+            response = self._respond_directly(intent, entities, message)
             if response:
                 context_manager.add_to_context(user_id, platform, message, response)
                 return response
         
-        # For complex queries or when entities are present, use LLM
-        # Gather relevant data for context
         relevant_data = self._gather_relevant_data(intent, entities)
-        
-        # Use LLM for intelligent responses
         response = self._use_llm(
             message, intent, entities, context,
             user_id, platform, conversation_history,
             relevant_data=relevant_data
         )
         
-        # Learn from interaction
         if learning_system:
             learning_system.learn_from_interaction(
                 user_id, platform, message, response, intent, entities
             )
         
-        # Save to history
         context_manager.add_to_context(user_id, platform, message, response)
         return response
     
@@ -256,8 +264,6 @@ class Router:
     ) -> Dict[str, Any]:
         """Gather relevant data based on intent and entities for LLM context."""
         relevant_data = {}
-        
-        # Extract entities
         doctor_name = None
         service_name = None
         branch_id = None
@@ -266,7 +272,6 @@ class Router:
         for entity in entities:
             entity_type = entity.get('type', '')
             entity_value = entity.get('value', '')
-            
             if entity_type == 'doctor_name':
                 doctor_name = entity_value
             elif entity_type == 'service_name':
@@ -276,38 +281,28 @@ class Router:
             elif entity_type == 'date':
                 date_str = entity_value
         
-        # Gather data based on intent
         if intent == "doctor":
             if doctor_name:
                 doctor = data_handler.find_doctor_by_name(doctor_name)
                 if doctor:
                     relevant_data['doctor'] = doctor
-                    # Get availability if date mentioned
                     if date_str:
                         parsed_date = parse_relative_date(date_str)
                         if parsed_date:
-                            availability = data_handler.get_doctor_availability_today(
-                                doctor.get('doctor_id')
-                            )
+                            availability = data_handler.get_doctor_availability_today(doctor.get('doctor_id'))
                             if availability:
                                 relevant_data['availability'] = availability
             else:
-                # Get all doctors
-                doctors = data_handler.get_doctors()
-                relevant_data['doctors'] = doctors
+                relevant_data['doctors'] = data_handler.get_doctors()
         
         elif intent == "service":
             if service_name:
                 service = data_handler.find_service_by_name(service_name)
                 if service:
                     relevant_data['service'] = service
-                    # Get branches where service is available
-                    branches = data_handler.get_branches()
-                    relevant_data['branches'] = branches
+                    relevant_data['branches'] = data_handler.get_branches()
             else:
-                # Get all services
-                services = data_handler.get_services()
-                relevant_data['services'] = services
+                relevant_data['services'] = data_handler.get_services()
         
         elif intent == "branch":
             if branch_id:
@@ -315,27 +310,21 @@ class Router:
                 if branch:
                     relevant_data['branch'] = branch
             else:
-                # Get all branches
-                branches = data_handler.get_branches()
-                relevant_data['branches'] = branches
+                relevant_data['branches'] = data_handler.get_branches()
         
         elif intent == "hours":
-            # Get all branches with hours information
             branches = data_handler.get_branches()
             if branches:
                 relevant_data['branches'] = branches
-                # Include hours_weekdays and hours_weekend for each branch
                 for branch in branches:
                     branch['hours_weekdays'] = branch.get('hours_weekdays', '')
                     branch['hours_weekend'] = branch.get('hours_weekend', '')
         
         elif intent in ["contact", "general"]:
-            # Get all relevant data for general questions
             branches = data_handler.get_branches()
             if branches:
                 relevant_data['branches'] = branches
         
-        # Always include some general data for context
         if 'doctors' not in relevant_data:
             relevant_data['all_doctors'] = data_handler.get_doctors()
         if 'services' not in relevant_data:
@@ -349,19 +338,16 @@ class Router:
         self,
         intent: str,
         entities: List[Dict[str, Any]],
-        message: str = "",
-        relevant_data: Dict[str, Any] = None
+        message: str = ""
     ) -> str:
-        """Generate direct response without LLM for simple queries - faster."""
+        """Generate direct response without LLM for simple queries."""
         message_lower = message.lower() if message else ""
         
         if intent == "doctor":
-            # First check if asking about specialty (before checking for doctor name)
             doctors = data_handler.get_doctors()
             if not doctors:
                 return "⚠️ ما لقيت أطباء متاحين حالياً."
             
-            # Check if asking about specific specialty
             specialty_keywords = {
                 'أسنان': 'أسنان',
                 'اسنان': 'أسنان',
@@ -377,7 +363,6 @@ class Router:
                 'عظام': 'عظام'
             }
             
-            # Filter by specialty if mentioned
             filtered_doctors = doctors
             specialty_found = None
             for keyword, specialty in specialty_keywords.items():
@@ -387,7 +372,6 @@ class Router:
                     if filtered_doctors:
                         break
             
-            # If asking about specialty, return filtered list
             if specialty_found and filtered_doctors:
                 doctor_list = []
                 for doc in filtered_doctors:
@@ -400,31 +384,22 @@ class Router:
                     title = f"🏥 أطباء {specialty_found}:"
                     return f"{title}\n\n" + "\n".join([f"{i+1}. {d}" for i, d in enumerate(doctor_list)])
             
-            # Check if asking about a specific doctor by name (only if no specialty found)
             doctor_name_entity = next((e for e in entities if e.get('type') == 'doctor_name'), None)
             doctor_name_from_entity = doctor_name_entity.get('value') if doctor_name_entity else None
             
-            # Also check message for doctor names (fuzzy match) - but only if no specialty keyword found
             if not doctor_name_from_entity and not specialty_found:
                 for doc in doctors:
                     doc_name = doc.get('doctor_name', '').lower()
-                    # Check if message contains doctor name or part of it
                     if doc_name and any(part in message_lower for part in doc_name.split() if len(part) > 3):
-                        # Found a doctor name in message
                         doctor_name_from_entity = doc.get('doctor_name')
                         break
             
-            # If specific doctor requested, return their info
             if doctor_name_from_entity:
                 doctor = data_handler.find_doctor_by_name(doctor_name_from_entity)
                 if doctor:
-                    # Get branch info
                     branch_id = doctor.get('branch_id', '')
-                    branch = None
-                    if branch_id:
-                        branch = data_handler.get_branch_by_id(branch_id)
+                    branch = data_handler.get_branch_by_id(branch_id) if branch_id else None
                     
-                    # Format doctor info - include ALL available information
                     name = doctor.get('doctor_name', '')
                     specialty = doctor.get('specialty', '')
                     days = doctor.get('days', '')
@@ -462,7 +437,6 @@ class Router:
                 else:
                     return f"⚠️ ما لقيت طبيب باسم '{doctor_name_from_entity}'."
             
-            # Otherwise, show list of all doctors
             doctor_list = []
             for doc in doctors:
                 name = doc.get('doctor_name', '')
@@ -479,7 +453,6 @@ class Router:
             if not services:
                 return "⚠️ ما لقيت خدمات متاحة حالياً."
             
-            # Format services list
             service_list = []
             for svc in services:
                 name = svc.get('service_name', '')
@@ -497,7 +470,6 @@ class Router:
             if not branches:
                 return "⚠️ ما لقيت فروع متاحة حالياً."
             
-            # Format branches list
             branch_list = []
             for branch in branches:
                 name = branch.get('branch_name', '')
@@ -511,7 +483,7 @@ class Router:
                 return f"📍 الفروع:\n\n" + "\n".join([f"{i+1}. {b}" for i, b in enumerate(branch_list)])
             return "⚠️ ما لقيت فروع متاحة."
         
-        return None  # Use LLM for other cases
+        return None
     
     def _use_llm(
         self,

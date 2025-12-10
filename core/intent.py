@@ -7,6 +7,7 @@ from models.schemas import IntentSchema, Entity
 from utils.arabic_normalizer import normalize_ar
 from utils.entity_extractor import quick_extract_entities, merge_entities
 from rapidfuzz import process
+from cachetools import TTLCache
 
 
 def make_schema_strict(schema: dict) -> dict:
@@ -60,6 +61,9 @@ class IntentClassifier:
             raise ValueError("OPENAI_API_KEY environment variable is required")
         self.client = OpenAI(api_key=api_key)
         self.model = os.getenv('LLM_MODEL_INTENT', 'gpt-4o-mini')
+        
+        # Intent cache for similar messages (5 minute TTL)
+        self._intent_cache = TTLCache(maxsize=500, ttl=300)
         
         # Load doctors data once (performance optimization)
         try:
@@ -145,22 +149,29 @@ next_action:
     
     def classify(self, message: str, context: Dict[str, Any] = None) -> IntentSchema:
         """
-        Classify intent and extract entities.
-        
-        Process:
-        1. Quick entity extraction (Regex + normalization)
-        2. Quick greeting/thanks/goodbye check (before LLM for speed)
-        3. LLM Structured Output
-        4. Merge entities
-        5. Fallback if needed
+        Classify intent with caching for performance.
         
         Args:
             message: User message
-            context: Optional context (previous messages, etc.)
+            context: Optional context
             
         Returns:
-            IntentSchema with intent, entities, confidence, next_action
+            IntentSchema
         """
+        # Check cache first (use normalized message as key)
+        message_normalized = normalize_ar(message).lower().strip()
+        cache_key = message_normalized[:100]  # Limit key length
+        
+        if cache_key in self._intent_cache:
+            cached_result = self._intent_cache[cache_key]
+            # Return a copy to avoid mutation
+            return IntentSchema(
+                intent=cached_result.intent,
+                entities=[Entity(**e.dict()) for e in cached_result.entities],
+                confidence=cached_result.confidence,
+                next_action=cached_result.next_action
+            )
+        
         # 1) Quick entity extraction before LLM
         extracted_entities = quick_extract_entities(message)
         
@@ -256,16 +267,26 @@ next_action:
                     data["entities"] = merged_entities
                     
                     result = IntentSchema(**data)
+                    # Cache the result for future use
+                    self._intent_cache[cache_key] = result
                     return result
                 except Exception as parse_error:
                     # Fallback if parsing fails
-                    return self._fallback_classify(message, extracted_entities)
+                    fallback_result = self._fallback_classify(message, extracted_entities)
+                    # Cache fallback result too
+                    self._intent_cache[cache_key] = fallback_result
+                    return fallback_result
             else:
-                return self._fallback_classify(message, extracted_entities)
+                fallback_result = self._fallback_classify(message, extracted_entities)
+                self._intent_cache[cache_key] = fallback_result
+                return fallback_result
             
         except Exception as e:
             # Fallback to simple rule-based classification
-            return self._fallback_classify(message, extracted_entities)
+            fallback_result = self._fallback_classify(message, extracted_entities)
+            # Cache fallback result
+            self._intent_cache[cache_key] = fallback_result
+            return fallback_result
     
     def _fallback_classify(self, message: str, extracted_entities: List[Dict] = None) -> IntentSchema:
         """
