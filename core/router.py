@@ -102,10 +102,25 @@ class Router:
         
         # Handle booking intent
         message_lower = message.lower().strip()
-        explicit_booking_keywords = ['ابي احجز', 'اريد احجز', 'حاب احجز', 'ابي احجز عنده', 'اريد احجز عنده']
+        explicit_booking_keywords = ['ابي احجز', 'اريد احجز', 'حاب احجز', 'ابي احجز عنده', 'اريد احجز عنده', 'ابي موعد', 'اريد موعد']
         is_booking_request = any(keyword in message_lower for keyword in explicit_booking_keywords)
         
-        if is_booking_request or (intent == "booking" and next_action == "start_booking"):
+        # Check if message is just "حجز" or "احجز" - treat as question, not booking request
+        if message_lower.strip() in ['حجز', 'احجز', 'موعد']:
+            # This is a question about booking, not a booking request
+            response = self._use_llm(
+                message, intent, entities, context,
+                user_id, platform, conversation_history
+            )
+            context_manager.add_to_context(user_id, platform, message, response)
+            return response
+        
+        # Only proceed with booking if it's an explicit request
+        # Check if intent is booking AND we have entities (doctor_name, service_name, date, time) OR explicit booking request
+        has_booking_entities = any(e.get('type') in ['doctor_name', 'service_name', 'date', 'time'] for e in entities)
+        is_explicit_booking_intent = is_booking_request or (intent == "booking" and (next_action == "start_booking" or has_booking_entities))
+        
+        if is_explicit_booking_intent:
             # Check if there's a doctor name in entities
             doctor_name = None
             for entity in entities:
@@ -113,8 +128,9 @@ class Router:
                     doctor_name = entity.get('value')
                     break
             
-            # If no doctor name in entities, try to extract from conversation history
-            if not doctor_name and conversation_history:
+            # Only try to extract from conversation history if it's an explicit booking request
+            # AND the message mentions "عند" or "عنده" (booking with specific doctor)
+            if not doctor_name and is_booking_request and ('عند' in message_lower or 'عنده' in message_lower):
                 # Look for doctor names in recent conversation
                 doctors = data_handler.get_doctors()
                 for hist_item in reversed(conversation_history[:5]):  # Check last 5 messages
@@ -137,30 +153,23 @@ class Router:
                     if doctor_name:
                         break
             
-            # Check if message is just "حجز" or "احجز" - treat as question, not booking request
-            if message_lower.strip() in ['حجز', 'احجز', 'موعد']:
-                is_explicit_booking = False
+            # Start booking process
+            self.booking_manager.clear_state(user_id, platform)
+            if doctor_name:
+                self.booking_manager.set_state(user_id, platform, "name", {"doctor_name": doctor_name})
+                response = f"✅ حجز عند {doctor_name}\n\nما اسمك؟"
             else:
-                is_explicit_booking = is_booking_request or (intent == "booking" and next_action == "start_booking")
-                if not is_explicit_booking and doctor_name and ('عند' in message_lower or 'عنده' in message_lower):
-                    is_explicit_booking = True
-            
-            if is_explicit_booking:
-                self.booking_manager.clear_state(user_id, platform)
-                if doctor_name:
-                    self.booking_manager.set_state(user_id, platform, "name", {"doctor_name": doctor_name})
-                    response = f"✅ حجز عند {doctor_name}\n\nما اسمك؟"
-                else:
-                    response, _ = self.booking_manager.process_message(user_id, platform, message)
-                context_manager.add_to_context(user_id, platform, message, response)
-                return response
-            elif intent == "booking" and next_action != "start_booking":
-                response = self._use_llm(
-                    message, intent, entities, context,
-                    user_id, platform, conversation_history
-                )
-                context_manager.add_to_context(user_id, platform, message, response)
-                return response
+                response, _ = self.booking_manager.process_message(user_id, platform, message)
+            context_manager.add_to_context(user_id, platform, message, response)
+            return response
+        elif intent == "booking" and next_action != "start_booking":
+            # Booking intent but not explicit request - use LLM to explain
+            response = self._use_llm(
+                message, intent, entities, context,
+                user_id, platform, conversation_history
+            )
+            context_manager.add_to_context(user_id, platform, message, response)
+            return response
         
         if intent == "hours":
             branches = data_handler.get_branches()
@@ -228,13 +237,8 @@ class Router:
             context_manager.add_to_context(user_id, platform, message, response)
             return response
         
-        if intent == "faq":
-            message_lower = message.lower()
-            if not any(word in message_lower for word in ['كيف', 'طريقة', 'خطوات']):
-                # Common FAQ - direct response
-                response = "عذراً، ما قدرت أفهم سؤالك بالضبط. تبي تعرف عن:\n• أطباء\n• فروع\n• خدمات\n• حجز"
-                context_manager.add_to_context(user_id, platform, message, response)
-                return response
+        # FAQ and unclear intents always go to LLM with full data
+        # No direct responses - let LLM handle it intelligently
         
         if intent in ["doctor", "service", "branch"]:
             response = self._respond_directly(intent, entities, message)
