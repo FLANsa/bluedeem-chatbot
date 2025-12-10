@@ -88,9 +88,16 @@ class Router:
             context_manager.add_to_context(user_id, platform, message, response)
             return response
         
-        # Handle booking intent - only start if explicitly requested
-        # Don't start booking for simple queries like "أطباء" or "خدمات" or "مين أطباء الأسنان"
-        if intent == "booking" and next_action == "start_booking":
+        # Handle booking intent - check for booking requests even if not classified as booking
+        # Also handle cases like "ابي احجز عنده" where context is needed
+        message_lower = message.lower().strip()
+        explicit_booking_keywords = ['ابي احجز', 'اريد احجز', 'حاب احجز', 'ابي احجز عنده', 'اريد احجز عنده']
+        
+        # Check if message contains booking intent (even if not classified as booking)
+        is_booking_request = any(keyword in message_lower for keyword in explicit_booking_keywords)
+        
+        # If booking request detected, try to extract doctor name from context
+        if is_booking_request or (intent == "booking" and next_action == "start_booking"):
             # Check if there's a doctor name in entities
             doctor_name = None
             for entity in entities:
@@ -98,12 +105,30 @@ class Router:
                     doctor_name = entity.get('value')
                     break
             
-            # Only start booking if user explicitly requested it with clear booking intent
-            # Don't start for just "حجز" - might be asking about booking process
-            message_lower = message.lower().strip()
-            
-            # Explicit booking keywords that indicate user wants to book NOW
-            explicit_booking_keywords = ['ابي احجز', 'اريد احجز', 'حاب احجز', 'عند', 'مع']
+            # If no doctor name in entities, try to extract from conversation history
+            if not doctor_name and conversation_history:
+                # Look for doctor names in recent conversation
+                from data.handler import data_handler
+                doctors = data_handler.get_doctors()
+                for hist_item in reversed(conversation_history[:5]):  # Check last 5 messages
+                    hist_message = hist_item.get('message', '').lower()
+                    hist_response = hist_item.get('response', '').lower()
+                    
+                    # Check if response contains doctor name
+                    for doctor in doctors:
+                        doctor_name_full = doctor.get('doctor_name', '')
+                        doctor_name_lower = doctor_name_full.lower()
+                        name_parts = doctor_name_lower.replace('د.', '').replace('دكتورة', '').replace('دكتور', '').strip().split()
+                        
+                        # Check if doctor name appears in recent conversation
+                        for part in name_parts:
+                            if len(part) > 3 and (part in hist_message or part in hist_response):
+                                doctor_name = doctor_name_full
+                                break
+                        if doctor_name:
+                            break
+                    if doctor_name:
+                        break
             
             # Check if message is just "حجز" or "احجز" - treat as question, not booking request
             if message_lower.strip() in ['حجز', 'احجز', 'موعد']:
@@ -111,10 +136,10 @@ class Router:
                 is_explicit_booking = False
             else:
                 # Check for explicit booking intent
-                is_explicit_booking = any(keyword in message_lower for keyword in explicit_booking_keywords)
+                is_explicit_booking = is_booking_request or (intent == "booking" and next_action == "start_booking")
                 
-                # If doctor name found with "عند" or "مع", it's likely a booking request
-                if not is_explicit_booking and doctor_name and ('عند' in message_lower or 'مع' in message_lower):
+                # If doctor name found with "عند" or "عنده", it's likely a booking request
+                if not is_explicit_booking and doctor_name and ('عند' in message_lower or 'عنده' in message_lower):
                     is_explicit_booking = True
             
             if is_explicit_booking:
@@ -133,7 +158,7 @@ class Router:
                 response, _ = self.booking_manager.process_message(user_id, platform, message)
                 context_manager.add_to_context(user_id, platform, message, response)
                 return response
-            else:
+            elif intent == "booking" and next_action != "start_booking":
                 # User is asking about booking but not explicitly requesting it - use LLM to explain
                 # This handles cases like "حجز" (just asking about booking)
                 response = self._use_llm(
@@ -142,6 +167,18 @@ class Router:
                 )
                 context_manager.add_to_context(user_id, platform, message, response)
                 return response
+        
+        # Handle hours intent - gather branch data and use LLM
+        if intent == "hours":
+            # Gather branch data for hours information
+            relevant_data = self._gather_relevant_data(intent, entities)
+            response = self._use_llm(
+                message, intent, entities, context,
+                user_id, platform, conversation_history,
+                relevant_data=relevant_data
+            )
+            context_manager.add_to_context(user_id, platform, message, response)
+            return response
         
         # Handle thanks and goodbye intents directly
         if intent == "thanks":
@@ -254,7 +291,17 @@ class Router:
                 branches = data_handler.get_branches()
                 relevant_data['branches'] = branches
         
-        elif intent in ["hours", "contact", "general"]:
+        elif intent == "hours":
+            # Get all branches with hours information
+            branches = data_handler.get_branches()
+            if branches:
+                relevant_data['branches'] = branches
+                # Include hours_weekdays and hours_weekend for each branch
+                for branch in branches:
+                    branch['hours_weekdays'] = branch.get('hours_weekdays', '')
+                    branch['hours_weekend'] = branch.get('hours_weekend', '')
+        
+        elif intent in ["contact", "general"]:
             # Get all relevant data for general questions
             branches = data_handler.get_branches()
             if branches:

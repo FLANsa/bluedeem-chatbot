@@ -89,11 +89,20 @@ class ChatAgent:
 - عند "وين العيادة؟": اعرض الفروع المتاحة مع عناوينها
 - عند أي سؤال عام متعلق بالعيادة: رد بشكل مفيد + قدم خيارات للخدمات المتاحة
 
+**الرد على أسئلة الدوام/الأوقات:**
+- عند "متى تفتحون؟" أو "متى اوقات الدوام؟": استخدم بيانات الفروع (hours_weekdays و hours_weekend) لعرض أوقات الدوام لكل فرع
+- عند "متى تفتح الفروع؟": اعرض أوقات الدوام لكل فرع من بيانات الفروع
+- استخدم البيانات المتاحة من Google Sheets - لا تخترع أوقات
+- كن مختصراً - اعرض الأوقات بشكل واضح ومباشر
+- مثال: "⏰ دوامنا: الأحد-الخميس: 9 صباحاً - 6 مساءً، الجمعة-السبت: 2 مساءً - 8 مساءً"
+
 **أمثلة على الردود المختصرة:**
 - عند "أطباء": "عندنا أطباء في تخصصات مختلفة. مين تبي؟ (أسنان/جلدية/أطفال/نساء)"
 - عند "خدمات": "خدماتنا متنوعة. عندك استفسار عن خدمة معينة؟"
 - عند "مين أطباء الأسنان": "أطباء الأسنان: د. محمد العتيبي، د. فاطمة السالم"
+- عند "مين الاطباء الي عندكم": "عندنا أطباء في تخصصات مختلفة: أسنان، جلدية، أطفال، نساء وولادة، عظام. مين تبي؟"
 - عند "الدكتورة سارة ب اي فرع": "الدكتورة سارة في فرع الرياض - العليا"
+- عند "متى تفتحون؟": "⏰ دوامنا: الأحد-الخميس: 9 صباحاً - 6 مساءً، الجمعة-السبت: 2 مساءً - 8 مساءً"
 
 **تذكر:**
 - **مختصر جداً (2-3 جمل كحد أقصى)**
@@ -406,6 +415,29 @@ class ChatAgent:
                         "hours_weekend": branch.get('hours_weekend', '')
                     })
                 context_parts.append(f"الفروع ({len(branches)} فرع):\n{json.dumps(branches_list, ensure_ascii=False, indent=2)}")
+        
+        # For hours questions, provide branch hours information
+        elif intent == "hours":
+            # Always get branches data with hours information
+            if 'branches' in relevant_data:
+                branches = relevant_data['branches']
+            elif 'all_branches' in relevant_data:
+                branches = relevant_data['all_branches']
+            else:
+                branches = data_handler.get_branches()
+            
+            if branches:
+                branches_list = []
+                for branch in branches:
+                    branch_info = {
+                        "branch_name": branch.get('branch_name', ''),
+                        "hours_weekdays": branch.get('hours_weekdays', ''),
+                        "hours_weekend": branch.get('hours_weekend', ''),
+                        "address": branch.get('address', ''),
+                        "city": branch.get('city', '')
+                    }
+                    branches_list.append(branch_info)
+                context_parts.append(f"أوقات الدوام للفروع:\n{json.dumps(branches_list, ensure_ascii=False, indent=2)}")
         
         # For general questions, provide clinic information in compact format
         elif intent == "general":
