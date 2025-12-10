@@ -201,7 +201,10 @@ class DataHandler:
         
         # Only use Google Sheets if enabled
         if not self.google_sheets_source:
-            raise ValueError("Google Sheets is not enabled. Please set GOOGLE_SHEETS_ENABLED=true in .env")
+            # Return empty list instead of raising error
+            import logging
+            logging.warning("Google Sheets is not enabled. Returning empty data.")
+            return []
         
         try:
             rows = self.google_sheets_source.get_doctors()
@@ -223,7 +226,10 @@ class DataHandler:
         
         # Only use Google Sheets if enabled
         if not self.google_sheets_source:
-            raise ValueError("Google Sheets is not enabled. Please set GOOGLE_SHEETS_ENABLED=true in .env")
+            # Return empty list instead of raising error
+            import logging
+            logging.warning("Google Sheets is not enabled. Returning empty data.")
+            return []
         
         try:
             rows = self.google_sheets_source.get_branches()
@@ -245,7 +251,10 @@ class DataHandler:
         
         # Only use Google Sheets if enabled
         if not self.google_sheets_source:
-            raise ValueError("Google Sheets is not enabled. Please set GOOGLE_SHEETS_ENABLED=true in .env")
+            # Return empty list instead of raising error
+            import logging
+            logging.warning("Google Sheets is not enabled. Returning empty data.")
+            return []
         
         try:
             rows = self.google_sheets_source.get_services()
@@ -267,7 +276,10 @@ class DataHandler:
         
         # Only use Google Sheets if enabled
         if not self.google_sheets_source:
-            raise ValueError("Google Sheets is not enabled. Please set GOOGLE_SHEETS_ENABLED=true in .env")
+            # Return empty list instead of raising error
+            import logging
+            logging.warning("Google Sheets is not enabled. Returning empty data.")
+            return []
         
         try:
             # Get all availability data (we'll filter by date later)

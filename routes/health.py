@@ -28,6 +28,15 @@ async def health_data():
             "services_count": len(services)
         }
     except Exception as e:
+        # If Google Sheets is not enabled, return empty data status
+        if "Google Sheets is not enabled" in str(e):
+            return {
+                "status": "warning",
+                "message": "Google Sheets is not enabled. Please set GOOGLE_SHEETS_ENABLED=true in environment variables.",
+                "doctors_count": 0,
+                "branches_count": 0,
+                "services_count": 0
+            }
         raise HTTPException(status_code=500, detail=f"Data loading error: {str(e)}")
 
 
