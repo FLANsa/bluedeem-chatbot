@@ -161,9 +161,12 @@ class DataHandler:
         
         # Initialize Google Sheets source if enabled
         self.google_sheets_source = None
-        if config.GOOGLE_SHEETS_ENABLED and config.GOOGLE_SHEETS_ID:
+        google_sheets_enabled = os.getenv('GOOGLE_SHEETS_ENABLED', 'false').lower() == 'true'
+        google_sheets_id = os.getenv('GOOGLE_SHEETS_ID', '')
+        
+        if google_sheets_enabled and google_sheets_id:
             try:
-                credentials_path = config.GOOGLE_SHEETS_CREDENTIALS
+                credentials_path = os.getenv('GOOGLE_SHEETS_CREDENTIALS', 'google-credentials.json')
                 if credentials_path and not credentials_path.startswith('/'):
                     # Relative path - make it absolute
                     from pathlib import Path
