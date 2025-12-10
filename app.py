@@ -6,6 +6,11 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import logging
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 from routes import webhook, health, chat
 from data.db import initialize_database
 
