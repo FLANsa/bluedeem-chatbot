@@ -110,7 +110,7 @@ next_action:
 
 قواعد مهمة:
 - إذا كانت الرسالة فيها "حجز" بدون (فرع/طبيب/خدمة/وقت واضح) → intent=booking و next_action=ask_clarification
-- إذا "وين" بدون ذكر فرع/عنوان واضح → intent=branch + ask_clarification
+- إذا "وين" أو "الموقع" أو "موقع" أو "عطني الموقع" → intent=branch + use_llm
 - إذا "مين" مع "اطباء" أو "دكاتره" → intent=doctor
 - إذا "متى" مع "تفتح" أو "دوام" → intent=hours
 - إذا "شكر" أو "تمام" → intent=thanks
@@ -123,7 +123,9 @@ next_action:
 - "ما اسمك؟" → general + use_llm
 - "من أنت؟" → general + use_llm
 - "كيف أحجز؟" → general + use_llm
-- "وين العيادة؟" → branch + ask_clarification
+- "وين العيادة؟" → branch + use_llm
+- "عطني الموقع" → branch + use_llm
+- "الموقع" → branch + use_llm
 - "متى تفتحون؟" → hours + use_llm
 - "متى اوقات الدوام؟" → hours + use_llm
 - "متى تفتح الفروع؟" → hours + use_llm
@@ -159,11 +161,16 @@ next_action:
         
         # 2) Quick check for common intents (greeting/thanks/goodbye) before LLM
         message_normalized = normalize_ar(message)
-        message_lower = message_normalized.lower()
+        message_lower = message_normalized.lower().strip()
+        message_clean = message_lower.replace(' ', '').replace('،', '').replace(',', '')
         
-        # Greetings - check first for speed
+        # Greetings - check first for speed (check both normalized and clean versions)
         greeting_keywords = ['مرحبا', 'اهلا', 'السلام', 'هاي', 'هلا', 'كيف حالك', 'كيفك', 'السلام عليكم', 'وعليكم السلام']
-        if any(keyword in message_lower for keyword in greeting_keywords):
+        # Also check exact matches for common greetings (both with and without normalization)
+        if (message_clean in ['هلا', 'اهلا', 'مرحبا', 'هاي'] or 
+            message.strip().lower() in ['هلا', 'اهلا', 'مرحبا', 'هاي', 'أهلا', 'أهلاً'] or
+            any(keyword in message_lower for keyword in greeting_keywords) or
+            any(keyword in message.strip().lower() for keyword in ['هلا', 'اهلا', 'مرحبا', 'هاي', 'أهلا', 'أهلاً'])):
             return IntentSchema(
                 intent="greeting",
                 entities=[Entity(**e) for e in extracted_entities] if extracted_entities else [],
@@ -257,7 +264,9 @@ next_action:
         
         # Greetings - clear keywords (already handled in classify, but keep as fallback)
         greeting_keywords = ['مرحبا', 'اهلا', 'السلام', 'هاي', 'هلا', 'كيف حالك', 'كيفك', 'السلام عليكم', 'وعليكم السلام']
-        if any(keyword in message_lower for keyword in greeting_keywords):
+        # Check exact matches first for common greetings
+        if (message_clean in ['هلا', 'اهلا', 'مرحبا', 'هاي'] or 
+            any(keyword in message_lower for keyword in greeting_keywords)):
             return IntentSchema(
                 intent="greeting",
                 entities=[Entity(**e) for e in entities] if entities else [],
@@ -322,6 +331,34 @@ next_action:
                 entities=[Entity(**e) for e in entities] if entities else [],
                 confidence=0.9,
                 next_action="start_booking"
+            )
+        
+        # Check for simple keywords that should be handled
+        # "أطباء" or "اطباء" (after normalization) → doctor
+        if message_clean in ['اطباء', 'أطباء', 'طبيب', 'دكتور', 'دكتورة']:
+            return IntentSchema(
+                intent="doctor",
+                entities=[Entity(**e) for e in entities] if entities else [],
+                confidence=0.9,
+                next_action="use_llm"
+            )
+        
+        # "فروع" or "فرع" → branch
+        if message_clean in ['فروع', 'فرع', 'عنوان', 'مكان']:
+            return IntentSchema(
+                intent="branch",
+                entities=[Entity(**e) for e in entities] if entities else [],
+                confidence=0.9,
+                next_action="use_llm"
+            )
+        
+        # "خدمات" or "خدمة" → service
+        if message_clean in ['خدمات', 'خدمة']:
+            return IntentSchema(
+                intent="service",
+                entities=[Entity(**e) for e in entities] if entities else [],
+                confidence=0.9,
+                next_action="use_llm"
             )
         
         # If nothing matches, return unclear (let LLM handle it)

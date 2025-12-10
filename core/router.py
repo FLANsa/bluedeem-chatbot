@@ -328,17 +328,60 @@ class Router:
         message_lower = message.lower() if message else ""
         
         if intent == "doctor":
-            # Check if asking about a specific doctor by name
+            # First check if asking about specialty (before checking for doctor name)
+            doctors = data_handler.get_doctors()
+            if not doctors:
+                return "⚠️ ما لقيت أطباء متاحين حالياً."
+            
+            # Check if asking about specific specialty
+            specialty_keywords = {
+                'أسنان': 'أسنان',
+                'اسنان': 'أسنان',
+                'الأسنان': 'أسنان',
+                'الاسنان': 'أسنان',
+                'جلدية': 'جلدية',
+                'الجلدية': 'جلدية',
+                'نساء': 'نساء وولادة',
+                'ولادة': 'نساء وولادة',
+                'أطفال': 'أطفال',
+                'اطفال': 'أطفال',
+                'العظام': 'عظام',
+                'عظام': 'عظام'
+            }
+            
+            # Filter by specialty if mentioned
+            filtered_doctors = doctors
+            specialty_found = None
+            for keyword, specialty in specialty_keywords.items():
+                if keyword in message_lower:
+                    filtered_doctors = [d for d in doctors if d.get('specialty', '') == specialty]
+                    specialty_found = specialty
+                    if filtered_doctors:
+                        break
+            
+            # If asking about specialty, return filtered list
+            if specialty_found and filtered_doctors:
+                doctor_list = []
+                for doc in filtered_doctors:
+                    name = doc.get('doctor_name', '')
+                    specialty = doc.get('specialty', '')
+                    if name:
+                        doctor_list.append(f"{name} ({specialty})" if specialty else name)
+                
+                if doctor_list:
+                    title = f"🏥 أطباء {specialty_found}:"
+                    return f"{title}\n\n" + "\n".join([f"{i+1}. {d}" for i, d in enumerate(doctor_list)])
+            
+            # Check if asking about a specific doctor by name (only if no specialty found)
             doctor_name_entity = next((e for e in entities if e.get('type') == 'doctor_name'), None)
             doctor_name_from_entity = doctor_name_entity.get('value') if doctor_name_entity else None
             
-            # Also check message for doctor names (fuzzy match)
-            if not doctor_name_from_entity:
-                doctors = data_handler.get_doctors()
+            # Also check message for doctor names (fuzzy match) - but only if no specialty keyword found
+            if not doctor_name_from_entity and not specialty_found:
                 for doc in doctors:
                     doc_name = doc.get('doctor_name', '').lower()
                     # Check if message contains doctor name or part of it
-                    if doc_name and any(part in message_lower for part in doc_name.split() if len(part) > 2):
+                    if doc_name and any(part in message_lower for part in doc_name.split() if len(part) > 3):
                         # Found a doctor name in message
                         doctor_name_from_entity = doc.get('doctor_name')
                         break
@@ -391,48 +434,16 @@ class Router:
                 else:
                     return f"⚠️ ما لقيت طبيب باسم '{doctor_name_from_entity}'."
             
-            # Otherwise, show list of doctors
-            doctors = data_handler.get_doctors()
-            if not doctors:
-                return "⚠️ ما لقيت أطباء متاحين حالياً."
-            
-            # Check if asking about specific specialty
-            specialty_keywords = {
-                'أسنان': 'أسنان',
-                'اسنان': 'أسنان',
-                'الأسنان': 'أسنان',
-                'الاسنان': 'أسنان',
-                'جلدية': 'جلدية',
-                'الجلدية': 'جلدية',
-                'نساء': 'نساء وولادة',
-                'ولادة': 'نساء وولادة',
-                'أطفال': 'أطفال',
-                'اطفال': 'أطفال',
-                'عظام': 'عظام',
-                'العظام': 'عظام'
-            }
-            
-            # Filter by specialty if mentioned
-            filtered_doctors = doctors
-            specialty_found = None
-            for keyword, specialty in specialty_keywords.items():
-                if keyword in message_lower:
-                    filtered_doctors = [d for d in doctors if d.get('specialty', '') == specialty]
-                    specialty_found = specialty
-                    if filtered_doctors:
-                        break
-            
-            # Format doctors list
+            # Otherwise, show list of all doctors
             doctor_list = []
-            for doc in filtered_doctors:
+            for doc in doctors:
                 name = doc.get('doctor_name', '')
                 specialty = doc.get('specialty', '')
                 if name:
                     doctor_list.append(f"{name} ({specialty})" if specialty else name)
             
             if doctor_list:
-                title = f"🏥 أطباء {specialty_found}:" if specialty_found else "🏥 الأطباء المتاحون:"
-                return f"{title}\n\n" + "\n".join([f"{i+1}. {d}" for i, d in enumerate(doctor_list)])
+                return f"🏥 الأطباء المتاحون:\n\n" + "\n".join([f"{i+1}. {d}" for i, d in enumerate(doctor_list)])
             return "⚠️ ما لقيت أطباء متاحين."
         
         elif intent == "service":
