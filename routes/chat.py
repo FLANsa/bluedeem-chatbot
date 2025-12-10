@@ -45,6 +45,9 @@ async def chat_api(request: ChatRequest):
     Returns:
         Chat response with bot message
     """
+    import logging
+    import traceback
+    
     try:
         response_text = chat_router.process(
             user_id=request.user_id,
@@ -55,5 +58,11 @@ async def chat_api(request: ChatRequest):
         return ChatResponse(response=response_text)
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+        logger = logging.getLogger(__name__)
+        error_detail = traceback.format_exc()
+        logger.error(f"Error in chat_api: {str(e)}\n{error_detail}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error processing message: {str(e)}"
+        )
 

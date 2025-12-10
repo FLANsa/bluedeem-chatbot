@@ -185,6 +185,7 @@ class DataHandler:
                 import logging
                 logging.info("Google Sheets source initialized")
             except Exception as e:
+                import logging
                 import traceback
                 import logging
                 logging.error(f"Failed to initialize Google Sheets: {e}")
