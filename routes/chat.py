@@ -1,0 +1,59 @@
+"""Chat API route for web UI testing."""
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+from core.router import Router
+from pathlib import Path
+
+router = APIRouter()
+
+# Initialize router
+chat_router = Router()
+
+
+class ChatRequest(BaseModel):
+    """Chat request model."""
+    user_id: str
+    platform: str
+    message: str
+
+
+class ChatResponse(BaseModel):
+    """Chat response model."""
+    response: str
+
+
+@router.get("/ui", response_class=HTMLResponse)
+async def chat_ui():
+    """Serve chat UI."""
+    html_path = Path(__file__).parent.parent / "static" / "index.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="UI file not found")
+    
+    with open(html_path, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+
+@router.post("/api/chat", response_model=ChatResponse)
+async def chat_api(request: ChatRequest):
+    """
+    Chat API endpoint for web UI.
+    
+    Args:
+        request: Chat request with user_id, platform, and message
+        
+    Returns:
+        Chat response with bot message
+    """
+    try:
+        response_text = chat_router.process(
+            user_id=request.user_id,
+            platform=request.platform,
+            message=request.message
+        )
+        
+        return ChatResponse(response=response_text)
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+
