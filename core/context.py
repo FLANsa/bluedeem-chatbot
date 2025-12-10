@@ -82,22 +82,70 @@ class ContextManager:
         max_length: int = 2000
     ) -> str:
         """
-        Build context string from conversation history.
+        Build context string from conversation history with smart summarization.
         
         Args:
             conversation_history: List of conversation entries
             max_length: Maximum length of context string
             
         Returns:
-            Formatted context string
+            Formatted context string with summary
         """
         if not conversation_history:
             return ""
         
+        # Extract important information from conversation
+        topics_mentioned = []
+        doctors_mentioned = []
+        services_mentioned = []
+        branches_mentioned = []
+        intents_detected = []
+        
+        # Analyze conversation to extract key information
+        for entry in conversation_history:
+            message = entry.get('message', '').lower()
+            response = entry.get('response', '').lower()
+            
+            # Detect topics
+            if any(word in message or word in response for word in ['طبيب', 'دكتور', 'د.']):
+                # Try to extract doctor names
+                for word in message.split() + response.split():
+                    if len(word) > 3 and word not in ['طبيب', 'دكتور', 'د.']:
+                        if word not in doctors_mentioned:
+                            doctors_mentioned.append(word)
+            
+            if any(word in message or word in response for word in ['خدمة', 'خدمات']):
+                topics_mentioned.append('خدمات')
+            
+            if any(word in message or word in response for word in ['فرع', 'فروع', 'فرعنا']):
+                topics_mentioned.append('فروع')
+            
+            if any(word in message or word in response for word in ['حجز', 'موعد', 'احجز']):
+                topics_mentioned.append('حجز')
+            
+            if any(word in message or word in response for word in ['دوام', 'ساعات', 'وقت']):
+                topics_mentioned.append('أوقات الدوام')
+        
+        # Build summary
+        summary_parts = []
+        if topics_mentioned:
+            unique_topics = list(set(topics_mentioned))
+            summary_parts.append(f"المواضيع المطروحة: {', '.join(unique_topics)}")
+        
+        if doctors_mentioned:
+            summary_parts.append(f"أطباء تم ذكرهم: {', '.join(doctors_mentioned[:5])}")  # Limit to 5
+        
+        summary = "\n".join(summary_parts)
+        
+        # Build conversation history
         context_parts = []
-        current_length = 0
+        if summary:
+            context_parts.append(f"ملخص المحادثة السابقة:\n{summary}\n")
+        
+        current_length = len(summary) if summary else 0
         
         # Build from most recent to oldest (reverse order)
+        # Prioritize recent messages
         for entry in reversed(conversation_history):
             message = entry.get('message', '')
             response = entry.get('response', '')
@@ -108,10 +156,16 @@ class ContextManager:
             if current_length + entry_length > max_length:
                 break
             
-            context_parts.insert(0, entry_text)
+            context_parts.append(entry_text)
             current_length += entry_length
         
-        return "".join(context_parts).strip()
+        result = "\n".join(context_parts).strip()
+        
+        # Add instruction at the end
+        if result:
+            result += "\n\n**مهم:** استخدم هذه المعلومات لفهم السياق وربط الأسئلة الحالية بالمحادثة السابقة."
+        
+        return result
 
 
 # Global instance
