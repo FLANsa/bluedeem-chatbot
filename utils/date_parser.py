@@ -3,10 +3,11 @@ from datetime import datetime, timedelta
 from typing import Optional
 import pytz
 import re
-import config
+import os
 
-
-RIYADH_TZ = pytz.timezone(config.TIMEZONE)
+# Get TIMEZONE from environment or use default
+TIMEZONE = os.getenv('TIMEZONE', 'Asia/Riyadh')
+RIYADH_TZ = pytz.timezone(TIMEZONE)
 
 
 # Arabic day names mapping
